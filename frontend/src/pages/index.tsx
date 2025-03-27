@@ -47,35 +47,33 @@ const HomePage: React.FC = () => {
         <title>Connect 4 - Home</title>
       </Head>
       
-      <div className="flex items-center justify-center min-h-screen p-4">
-        <div className={styles.homeContent}>
-          <h1 className={styles.title}>Connect 4</h1>
+      <div className={styles.homeContent}>
+        <h1 className={styles.title}>Connect 4</h1>
+        
+        <div className={styles.actions}>
+          <button 
+            className={styles.button} 
+            onClick={createGame}
+            disabled={loading}
+          >
+            {loading ? 'Creating...' : 'Create New Game'}
+          </button>
           
-          <div className={styles.actions}>
+          <div className={styles.joinSection}>
+            <input
+              type="text"
+              value={gameId}
+              onChange={(e) => setGameId(e.target.value)}
+              placeholder="Enter Game ID"
+              className={styles.input}
+            />
             <button 
-              className={styles.button} 
-              onClick={createGame}
+              className={styles.button}
+              onClick={joinGame}
               disabled={loading}
             >
-              {loading ? 'Creating...' : 'Create New Game'}
+              Join Game
             </button>
-            
-            <div className={styles.joinSection}>
-              <input
-                type="text"
-                value={gameId}
-                onChange={(e) => setGameId(e.target.value)}
-                placeholder="Enter Game ID"
-                className={styles.input}
-              />
-              <button 
-                className={styles.button}
-                onClick={joinGame}
-                disabled={loading}
-              >
-                Join Game
-              </button>
-            </div>
           </div>
         </div>
       </div>

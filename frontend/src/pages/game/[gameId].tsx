@@ -201,26 +201,32 @@ const GamePage: React.FC = () => {
           </div>
         </div>
         
-        <Board
-          board={gameState.board}
-          currentPlayer={gameState.currentPlayer}
-          playerTurn={isPlayerTurn}
-          makeMove={makeMove}
-          againstAgent={againstAgent}
-        />
-        
-        <GameControls
-          gameId={gameId.toString()}
-          againstAgent={againstAgent}
-          onStartAgentGame={startAgentGame}
-          onResetGame={resetGame}
-          copyGameId={copyGameId}
-        />
-        
-        <div className={styles.navigation}>
-          <Link href="/" className={styles.backLink}>
-            ← Back to Home
-          </Link>
+        <div className={styles.gameContent}>
+          <div className={styles.gameBoard}>
+            <Board
+              board={gameState.board}
+              currentPlayer={gameState.currentPlayer}
+              playerTurn={isPlayerTurn}
+              makeMove={makeMove}
+              againstAgent={againstAgent}
+            />
+          </div>
+          
+          <div className={styles.gameControlsContainer}>
+            <GameControls
+              gameId={gameId.toString()}
+              againstAgent={againstAgent}
+              onStartAgentGame={startAgentGame}
+              onResetGame={resetGame}
+              copyGameId={copyGameId}
+            />
+            
+            <div className={styles.navigation}>
+              <Link href="/" className={styles.backLink}>
+                ← Back to Home
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
       

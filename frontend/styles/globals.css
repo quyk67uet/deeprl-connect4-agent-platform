@@ -5,6 +5,7 @@
 
 :root {
     --primary-color: #2196f3;
+    --primary-color-rgb: 33, 150, 243; /* Giá trị RGB của #2196f3 */
     --player1-color: #f44336;
     --player2-color: #ffeb3b;
     --background-color: #121212;
@@ -26,10 +27,27 @@
         Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
       background-color: var(--background-color);
       color: var(--text-color);
+      overflow-x: hidden;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
     }
   
     a {
       color: inherit;
       text-decoration: none;
+    }
+    
+    #__next {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+      min-height: 100vh;
     }
   }

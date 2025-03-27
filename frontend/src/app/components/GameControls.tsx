@@ -34,6 +34,13 @@ const GameControls: React.FC<GameControlsProps> = ({
           Play Against AI
         </button>
       )}
+      
+      {againstAgent && (
+        <div className={styles.agentModeActive}>
+          <div className={styles.aiIndicator}></div>
+          Playing against AI
+        </div>
+      )}
     </div>
   );
 };

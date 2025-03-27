@@ -6,6 +6,9 @@ declare const styles: {
   readonly input: string;
   readonly button: string;
   readonly gameContainer: string;
+  readonly gameContent: string;
+  readonly gameBoard: string;
+  readonly gameControlsContainer: string;
   readonly status: string;
   readonly statusText: string;
   readonly connectionStatus: string;
@@ -23,6 +26,8 @@ declare const styles: {
   readonly backLink: string;
   readonly loading: string;
   readonly container: string;
+  readonly agentModeActive: string;
+  readonly aiIndicator: string;
 };
 
 export default styles;
