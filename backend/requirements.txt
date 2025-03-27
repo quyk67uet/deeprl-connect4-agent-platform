@@ -1,0 +1,16 @@
+# Core libraries
+numpy==1.24.3  # Sử dụng NumPy 1.x để tránh lỗi tương thích
+torch==2.5.1+cpu
+gymnasium==0.29.1
+stable-baselines3==2.1.0
+
+# FastAPI and server related
+fastapi==0.115.5
+uvicorn[standard]==0.32.0
+python-multipart==0.0.17
+pydantic==2.10.6
+websockets==14.1
+
+# Other dependencies
+pandas==2.2.1
+tensorboard==2.16.2 
