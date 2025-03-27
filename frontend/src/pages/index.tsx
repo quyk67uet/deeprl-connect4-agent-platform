@@ -1,86 +1,87 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
-import { toast, ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
-import styles from '../../styles/Game.module.css';
+import axios from 'axios';
+import styles from '../../styles/Home.module.css';
 
-const HomePage: React.FC = () => {
+// API URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+export default function Home() {
   const router = useRouter();
-  const [gameId, setGameId] = useState<string>('');
-  const [loading, setLoading] = useState<boolean>(false);
-
-  // Create a new game
-  const createGame = async () => {
+  const [isCreating, setIsCreating] = useState(false);
+  
+  // Create new game
+  const createNewGame = async () => {
+    setIsCreating(true);
     try {
-      setLoading(true);
-      const response = await fetch('http://localhost:8000/api/create-game', {
-        method: 'POST',
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to create game');
-      }
-      
-      const data = await response.json();
-      router.push(`/game/${data.game_id}`);
+      const response = await axios.post(`${API_URL}/api/create-game`);
+      router.push(`/game/${response.data.game_id}`);
     } catch (error) {
       console.error('Error creating game:', error);
-      toast.error('Failed to create game. Please try again.');
-      setLoading(false);
+      alert('Failed to create new game. Please try again.');
+      setIsCreating(false);
     }
   };
-
-  // Join an existing game
-  const joinGame = () => {
-    if (!gameId.trim()) {
-      toast.error('Please enter a game ID');
-      return;
+  
+  // Create AI battle
+  const createAIBattle = async () => {
+    setIsCreating(true);
+    try {
+      const response = await axios.post(`${API_URL}/api/create-battle`);
+      router.push(`/battle/${response.data.battle_id}`);
+    } catch (error) {
+      console.error('Error creating AI battle:', error);
+      alert('Failed to create AI battle. Please try again.');
+      setIsCreating(false);
     }
-    
-    router.push(`/game/${gameId}`);
   };
-
+  
   return (
     <>
       <Head>
-        <title>Connect 4 - Home</title>
+        <title>Connect 4 Game</title>
+        <meta name="description" content="Play Connect 4 online - Human vs Human, Human vs AI, or AI vs AI" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
       </Head>
       
-      <div className={styles.homeContent}>
+      <div className={styles.container}>
         <h1 className={styles.title}>Connect 4</h1>
         
-        <div className={styles.actions}>
+        <div className={styles.buttonContainer}>
           <button 
             className={styles.button} 
-            onClick={createGame}
-            disabled={loading}
+            onClick={createNewGame}
+            disabled={isCreating}
           >
-            {loading ? 'Creating...' : 'Create New Game'}
+            {isCreating ? 'Creating...' : 'New Game'}
           </button>
           
-          <div className={styles.joinSection}>
-            <input
-              type="text"
-              value={gameId}
-              onChange={(e) => setGameId(e.target.value)}
-              placeholder="Enter Game ID"
-              className={styles.input}
-            />
-            <button 
-              className={styles.button}
-              onClick={joinGame}
-              disabled={loading}
-            >
-              Join Game
-            </button>
-          </div>
+          <button
+            className={styles.button}
+            onClick={() => router.push('/join')}
+            disabled={isCreating}
+          >
+            Join Game
+          </button>
+          
+          <button
+            className={`${styles.button} ${styles.aiButton}`}
+            onClick={createAIBattle}
+            disabled={isCreating}
+          >
+            AI vs AI Battle
+          </button>
         </div>
+        
+        <p className={styles.instruction}>
+          Create a new game to play with a friend or against the AI, or join an existing game using a game ID.
+        </p>
+        
+        <p className={styles.aiInstruction}>
+          Create an AI vs AI battle to watch two AI agents play against each other. You can use your own AI or the default one.
+        </p>
       </div>
-      
-      <ToastContainer position="bottom-right" autoClose={3000} />
     </>
   );
-};
-
-export default HomePage;
+}

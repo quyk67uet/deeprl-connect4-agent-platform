@@ -13,4 +13,5 @@ websockets==14.1
 
 # Other dependencies
 pandas==2.2.1
-tensorboard==2.16.2 
+tensorboard==2.16.2
+httpx==0.24.1 
