@@ -1,0 +1,35 @@
+/* styles/globals.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --primary-color: #2196f3;
+    --player1-color: #f44336;
+    --player2-color: #ffeb3b;
+    --background-color: #121212;
+    --card-background: #1e1e1e;
+    --text-color: #ffffff;
+    --border-color: #333333;
+  }
+  
+  @layer base {
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+  
+    html,
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+        Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+      background-color: var(--background-color);
+      color: var(--text-color);
+    }
+  
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+  }
