@@ -33,6 +33,7 @@ const GamePage: React.FC = () => {
   const [playerNumber, setPlayerNumber] = useState<number>(0);
   const [connected, setConnected] = useState<boolean>(false);
   const [againstAgent, setAgainstAgent] = useState<boolean>(false);
+  const [spectatorCount, setSpectatorCount] = useState<number>(1);
   
   // Connect to WebSocket
   useEffect(() => {
@@ -65,6 +66,9 @@ const GamePage: React.FC = () => {
           setGameState(newState);
           setPlayerNumber(data.your_player);
           setAgainstAgent(data.agent_mode);
+          if (data.spectator_count) {
+            setSpectatorCount(data.spectator_count);
+          }
           console.log("Updated game state:", newState);
           console.log("Your player:", data.your_player);
           console.log("Agent mode:", data.agent_mode);
@@ -94,6 +98,11 @@ const GamePage: React.FC = () => {
           
         case 'player_left':
           toast.info(`Player ${data.player} left the game`);
+          break;
+          
+        case 'spectator_count':
+          setSpectatorCount(data.count);
+          toast.info(`${data.count} players/spectators are connected`);
           break;
       }
     };
@@ -196,8 +205,18 @@ const GamePage: React.FC = () => {
       <div className={styles.gameContainer}>
         <div className={styles.status}>
           <div className={styles.statusText}>{getStatusMessage()}</div>
-          <div className={styles.connectionStatus}>
+          <div className={styles.connectionStatus} style={{ backgroundColor: connected ? '#28a745' : '#dc3545' }}>
             {connected ? 'Connected' : 'Disconnected'}
+            {connected && (
+              <span style={{ 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                fontSize: '0.8rem', 
+                opacity: 0.9 
+              }}>
+                <span style={{ marginRight: '3px' }}>👁️</span> {spectatorCount} watching
+              </span>
+            )}
           </div>
         </div>
         

@@ -10,6 +10,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 export default function Home() {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [battleId, setBattleId] = useState('');
   
   // Create new game
   const createNewGame = async () => {
@@ -35,6 +37,15 @@ export default function Home() {
       alert('Failed to create AI battle. Please try again.');
       setIsCreating(false);
     }
+  };
+
+  // Join existing AI battle
+  const joinAIBattle = () => {
+    if (battleId.trim() === '') {
+      alert('Please enter a valid Battle ID');
+      return;
+    }
+    router.push(`/battle/${battleId.trim()}`);
   };
   
   return (
@@ -67,7 +78,7 @@ export default function Home() {
           
           <button
             className={`${styles.button} ${styles.aiButton}`}
-            onClick={createAIBattle}
+            onClick={() => setShowAIModal(true)}
             disabled={isCreating}
           >
             AI vs AI Battle
@@ -81,6 +92,47 @@ export default function Home() {
         <p className={styles.aiInstruction}>
           Create an AI vs AI battle to watch two AI agents play against each other. You can use your own AI or the default one.
         </p>
+
+        {showAIModal && (
+          <div className={styles.modalOverlay}>
+            <div className={styles.modal}>
+              <h2>AI vs AI Battle</h2>
+              <div className={styles.modalOptions}>
+                <button 
+                  className={styles.modalButton}
+                  onClick={createAIBattle}
+                  disabled={isCreating}
+                >
+                  Create New Battle
+                </button>
+                
+                <div className={styles.modalDivider}>OR</div>
+                
+                <div className={styles.joinBattleForm}>
+                  <input
+                    type="text"
+                    placeholder="Enter Battle ID"
+                    className={styles.battleInput}
+                    value={battleId}
+                    onChange={(e) => setBattleId(e.target.value)}
+                  />
+                  <button 
+                    className={styles.modalButton}
+                    onClick={joinAIBattle}
+                  >
+                    Join Existing Battle
+                  </button>
+                </div>
+              </div>
+              <button 
+                className={styles.closeButton}
+                onClick={() => setShowAIModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

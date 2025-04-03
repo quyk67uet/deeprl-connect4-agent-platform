@@ -54,6 +54,9 @@ const BattlePage: React.FC = () => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState<boolean>(false);
   
+  // Spectator count
+  const [spectatorCount, setSpectatorCount] = useState<number>(1);
+  
   // Connect to WebSocket
   useEffect(() => {
     if (!battleId) return;
@@ -90,6 +93,11 @@ const BattlePage: React.FC = () => {
           movingPlayer: data.moving_player
         }));
         
+        // Update spectator count if provided
+        if (data.spectator_count) {
+          setSpectatorCount(data.spectator_count);
+        }
+        
         // Show notifications for events
         if (data.type === 'battle_update' && data.last_move !== undefined) {
           const player = data.moving_player === 1 ? 'Red' : 'Yellow';
@@ -105,6 +113,19 @@ const BattlePage: React.FC = () => {
             toast.info('Game ended in a draw!');
           }
         }
+      }
+      // Thêm xử lý cho sự kiện player_joined và player_left
+      else if (data.type === 'player_joined') {
+        // Hiển thị thông báo khi có người xem mới tham gia
+        toast.info(`Someone joined to watch the battle`);
+      }
+      else if (data.type === 'spectator_count') {
+        // Hiển thị số người đang xem trận đấu
+        setSpectatorCount(data.count);
+        toast.info(`${data.count} spectators are watching this battle`);
+      }
+      else if (data.type === 'player_left') {
+        toast.info(`Someone left the battle`);
       }
     };
     
@@ -128,17 +149,43 @@ const BattlePage: React.FC = () => {
   // Start battle
   const startBattle = useCallback(() => {
     if (socket && socket.readyState === WebSocket.OPEN) {
-      // Get AI URLs, use empty string if none provided
-      const ai1Url = ai1Input.trim() === '' ? null : ai1Input.trim();
-      const ai2Url = ai2Input.trim() === '' ? null : ai2Input.trim();
+      // Get AI URLs and ensure they are correctly formatted
+      let ai1Url: string | null = ai1Input.trim();
+      let ai2Url: string | null = ai2Input.trim();
+      
+      // If URLs don't end with the required endpoint, add it
+      if (ai1Url && !ai1Url.includes('/api/connect4-move')) {
+        // If URL ends with /, remove it before adding the endpoint
+        if (ai1Url.endsWith('/')) {
+          ai1Url = ai1Url.slice(0, -1);
+        }
+        ai1Url = `${ai1Url}/api/connect4-move`;
+      }
+      
+      if (ai2Url && !ai2Url.includes('/api/connect4-move')) {
+        if (ai2Url.endsWith('/')) {
+          ai2Url = ai2Url.slice(0, -1);
+        }
+        ai2Url = `${ai2Url}/api/connect4-move`;
+      }
+      
+      // Empty strings to null
+      ai1Url = ai1Url === '' ? null : ai1Url;
+      ai2Url = ai2Url === '' ? null : ai2Url;
+      
+      // Log for debugging
+      console.log("Sending AI URLs:", { ai1_url: ai1Url, ai2_url: ai2Url });
       
       // Send start battle command
-      socket.send(JSON.stringify({
+      const message = {
         type: 'start_battle',
         ai1_url: ai1Url,
         ai2_url: ai2Url,
         max_turns: maxTurns
-      }));
+      };
+      
+      console.log("Sending WebSocket message:", message);
+      socket.send(JSON.stringify(message));
       
       toast.info('Starting AI battle!');
     }
@@ -194,8 +241,9 @@ const BattlePage: React.FC = () => {
       <div className={styles.battleContainer}>
         <div className={styles.status}>
           <div className={styles.statusText}>{getStatusMessage()}</div>
-          <div className={styles.connectionStatus}>
+          <div className={`${styles.connectionStatus} ${!connected ? styles.disconnected : ''}`}>
             {connected ? 'Connected' : 'Disconnected'}
+            {connected && <span className={styles.viewerCount}>{spectatorCount} watching</span>}
           </div>
         </div>
         

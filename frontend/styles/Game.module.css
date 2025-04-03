@@ -145,6 +145,30 @@
 .connectionStatus {
   font-size: 0.9rem;
   opacity: 0.8;
+  background-color: #28a745;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.connectionStatus.disconnected {
+  background-color: #dc3545;
+}
+
+.viewerCount {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.viewerCount::before {
+  content: "👁️";
+  margin-right: 3px;
+  font-size: 0.9rem;
 }
 
 .board {

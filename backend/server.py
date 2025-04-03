@@ -73,6 +73,8 @@ class ConnectionManager:
             games[game_id]["player_count"] += 1
             player_num = games[game_id]["player_count"]
             logger.info(f"Player {player_num} joined game {game_id}")
+        else:
+            logger.info(f"Spectator joined game {game_id} (connections: {len(connections[game_id])})")
             
         # Send initial game state
         game_state = games[game_id]["game"].get_state()
@@ -82,12 +84,13 @@ class ConnectionManager:
                 "type": "game_state",
                 "state": game_state,
                 "your_player": player_num,
-                "agent_mode": games[game_id]["agent_mode"]
+                "agent_mode": games[game_id]["agent_mode"],
+                "spectator_count": len(connections[game_id])
             },
             websocket
         )
         
-        # Notify others
+        # Notify others about new player or spectator
         await self.broadcast(
             {
                 "type": "player_joined",
@@ -95,6 +98,15 @@ class ConnectionManager:
             },
             game_id,
             websocket
+        )
+        
+        # Send updated spectator count to all
+        await self.broadcast(
+            {
+                "type": "spectator_count",
+                "count": len(connections[game_id])
+            },
+            game_id
         )
         
         return player_num
@@ -116,6 +128,16 @@ class ConnectionManager:
                     {
                         "type": "player_left",
                         "player": player_num
+                    },
+                    game_id,
+                    None
+                )
+                
+                # Send updated spectator count
+                await self.broadcast(
+                    {
+                        "type": "spectator_count",
+                        "count": len(connections[game_id])
                     },
                     game_id,
                     None
@@ -315,10 +337,12 @@ async def make_move(game_id: str, move: dict):
 # Make a move with external AI
 async def make_external_ai_move(game_id: str, ai_url: str):
     if game_id not in games:
+        logger.error(f"Game ID {game_id} not found")
         return False
     
     game = games[game_id]["game"]
     if game.game_over:
+        logger.error(f"Game {game_id} is already over")
         return False
     
     try:
@@ -332,40 +356,59 @@ async def make_external_ai_move(game_id: str, ai_url: str):
             "valid_moves": game.get_valid_moves()
         }
         
+        logger.info(f"Making request to external AI: {ai_url}")
+        logger.info(f"Request data: {data}")
+        
         # Make request to external AI
         import httpx
         async with httpx.AsyncClient() as client:
+            logger.info(f"Sending request to {ai_url}")
             response = await client.post(ai_url, json=data, timeout=5.0)
+            
+            logger.info(f"Response status code: {response.status_code}")
             
             if response.status_code == 200:
                 ai_data = response.json()
+                logger.info(f"Response data: {ai_data}")
                 column = ai_data.get("move")
                 
                 if column is not None and game.is_valid_move(column):
+                    logger.info(f"Valid move received from AI: {column}")
                     return column
+                else:
+                    logger.error(f"Invalid move received from AI: {column}")
+            else:
+                logger.error(f"Error response: {response.text}")
             
         # Fallback to random move if request fails
         import random
         valid_moves = game.get_valid_moves()
         if valid_moves:
-            return random.choice(valid_moves)
+            random_move = random.choice(valid_moves)
+            logger.info(f"Using fallback random move: {random_move}")
+            return random_move
     except Exception as e:
         logger.error(f"Error getting external AI move: {e}")
         # Fallback to random move
         import random
         valid_moves = game.get_valid_moves()
         if valid_moves:
-            return random.choice(valid_moves)
+            random_move = random.choice(valid_moves)
+            logger.info(f"Using fallback random move after exception: {random_move}")
+            return random_move
     
     return None
 
 # Simulate AI vs AI game
 async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Optional[str], max_turns: int = 50):
     if battle_id not in ai_battles:
+        logger.error(f"Battle {battle_id} not found")
         return
     
     battle = ai_battles[battle_id]
     game = battle["game"]
+    
+    logger.info(f"Starting AI battle with ai1_url={ai1_url}, ai2_url={ai2_url}")
     
     # Reset game
     game.reset()
@@ -399,8 +442,11 @@ async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Op
         # Determine which AI to use
         ai_url = ai1_url if current_player == 1 else ai2_url
         
+        logger.info(f"Turn {battle['current_turn']}, Player {current_player}, using AI URL: {ai_url}")
+        
         # If no external AI URL, use internal AI
         if not ai_url:
+            logger.info("No external AI URL, using internal AI")
             valid_moves = game.get_valid_moves()
             if valid_moves and ai_agent:
                 try:
@@ -412,14 +458,49 @@ async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Op
                     column = random.choice(valid_moves)
             else:
                 # Make random valid move
+                logger.info("No valid moves or AI agent, making random move")
                 import random
                 column = random.choice(game.get_valid_moves())
         else:
-            # Get move from external AI
-            column = await make_external_ai_move(battle_id, ai_url)
+            # Prepare data for external AI
+            game_state = game.get_state()
+            data = {
+                "board": game_state["board"],
+                "current_player": game_state["current_player"],
+                "valid_moves": game.get_valid_moves()
+            }
             
-            # If failed to get move, make random valid move
-            if column is None:
+            logger.info(f"Making request to external AI: {ai_url}")
+            logger.info(f"Request data: {data}")
+            
+            # Get move from external AI
+            try:
+                import httpx
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(ai_url, json=data, timeout=5.0)
+                    
+                    logger.info(f"Response status code: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        ai_data = response.json()
+                        logger.info(f"Response data: {ai_data}")
+                        column = ai_data.get("move")
+                        
+                        if column is not None and game.is_valid_move(column):
+                            logger.info(f"Valid move received from AI: {column}")
+                        else:
+                            logger.error(f"Invalid move received from AI: {column}")
+                            # If invalid, make random valid move
+                            import random
+                            column = random.choice(game.get_valid_moves())
+                    else:
+                        logger.error(f"Error response: {response.text}")
+                        # If error, make random valid move
+                        import random
+                        column = random.choice(game.get_valid_moves())
+            except Exception as e:
+                logger.error(f"Error calling external AI: {e}")
+                # If failed to get move, make random valid move
                 import random
                 column = random.choice(game.get_valid_moves())
         
@@ -473,6 +554,26 @@ async def websocket_battle(websocket: WebSocket, battle_id: str):
         connections[battle_id] = []
     connections[battle_id].append(websocket)
     
+    # Broadcast spectator count to all connections
+    spectator_count = len(connections[battle_id])
+    await manager.broadcast(
+        {
+            "type": "spectator_count",
+            "count": spectator_count
+        },
+        battle_id
+    )
+    
+    # Notify others that someone joined
+    await manager.broadcast(
+        {
+            "type": "player_joined",
+            "player": 0  # 0 indicates spectator
+        },
+        battle_id,
+        websocket  # Exclude the current connection from receiving this message
+    )
+    
     # Create battle if it doesn't exist
     if battle_id not in ai_battles:
         ai_battles[battle_id] = {
@@ -493,16 +594,21 @@ async def websocket_battle(websocket: WebSocket, battle_id: str):
         "current_turn": battle["current_turn"],
         "battle_id": battle_id,
         "ai1_url": battle["ai1_url"],
-        "ai2_url": battle["ai2_url"]
+        "ai2_url": battle["ai2_url"],
+        "spectator_count": spectator_count
     })
     
     try:
         while True:
             data = await websocket.receive_json()
+            logger.info(f"WebSocket message received: {data}")
             
             if data["type"] == "start_battle":
-                ai1_url = data.get("ai1_url")
+                logger.info(f"Battle start requested with data: {data}")
+                ai1_url = data.get("ai1_url") 
                 ai2_url = data.get("ai2_url")
+                
+                logger.info(f"AI URLs: ai1_url={ai1_url}, ai2_url={ai2_url}")
                 
                 # Update AI URLs
                 battle["ai1_url"] = ai1_url
@@ -537,7 +643,8 @@ async def websocket_battle(websocket: WebSocket, battle_id: str):
                         "current_turn": battle["current_turn"],
                         "battle_id": battle_id,
                         "ai1_url": battle["ai1_url"],
-                        "ai2_url": battle["ai2_url"]
+                        "ai2_url": battle["ai2_url"],
+                        "spectator_count": len(connections[battle_id])
                     },
                     battle_id
                 )
@@ -545,6 +652,26 @@ async def websocket_battle(websocket: WebSocket, battle_id: str):
     except WebSocketDisconnect:
         if battle_id in connections and websocket in connections[battle_id]:
             connections[battle_id].remove(websocket)
+            
+            # Notify remaining spectators that someone left
+            if connections[battle_id]:
+                spectator_count = len(connections[battle_id])
+                await manager.broadcast(
+                    {
+                        "type": "player_left",
+                        "player": 0  # 0 indicates spectator
+                    },
+                    battle_id
+                )
+                
+                # Update spectator count
+                await manager.broadcast(
+                    {
+                        "type": "spectator_count",
+                        "count": spectator_count
+                    },
+                    battle_id
+                )
             
             # If no connections left, cleanup
             if not connections[battle_id]:
@@ -608,4 +735,39 @@ async def external_ai_move(request: Request):
     except Exception as e:
         logger.error(f"Error in external AI move: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# New endpoint for connect4-move
+@app.post("/api/connect4-move")
+async def connect4_move(request: Request):
+    try:
+        data = await request.json()
+        logger.info(f"Received connect4-move request: {data}")
+        
+        board = data.get("board")
+        valid_moves = data.get("valid_moves", [])
+        
+        if not board or not valid_moves:
+            raise HTTPException(status_code=400, detail="Invalid request data")
+        
+        if ai_agent:
+            # Use trained AI to make a move
+            logger.info(f"Using trained AI to make a move")
+            column = get_agent_move(ai_agent, board, valid_moves)
+            logger.info(f"Returning move: {column}")
+        else:
+            # Fallback to random move
+            import random
+            column = random.choice(valid_moves)
+            logger.info(f"Returning move: {column}")
+        
+        return {"move": column}
+    
+    except Exception as e:
+        logger.error(f"Error in connect4 move: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Simple test endpoint
+@app.get("/api/test")
+async def test_endpoint():
+    return {"status": "ok", "message": "Test endpoint is working"}
 
