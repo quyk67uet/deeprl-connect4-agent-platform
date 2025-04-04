@@ -54,7 +54,6 @@ const GamePage: React.FC = () => {
         case 'game_state':
           console.log("Raw state from server:", data.state);
           
-          // Đảm bảo cập nhật đúng cấu trúc của gameState
           const newState = {
             board: data.state.board || Array(6).fill(0).map(() => Array(7).fill(0)),
             currentPlayer: data.state.current_player || 1,
@@ -75,7 +74,6 @@ const GamePage: React.FC = () => {
           break;
           
         case 'game_update':
-          // Đảm bảo cập nhật đúng cấu trúc của gameState
           const updatedState = {
             board: data.state.board || gameState.board,
             currentPlayer: data.state.current_player || gameState.currentPlayer,
@@ -179,12 +177,9 @@ const GamePage: React.FC = () => {
   
   // Check if it's player's turn - allow player 1 to make moves in agent mode
   const isPlayerTurn = 
-    // Điều kiện thông thường: người chơi hiện tại là player đang đăng nhập
     (gameState.currentPlayer === playerNumber && !gameState.winner && !gameState.draw) ||
-    // Hoặc trong chế độ agent: player 1 và lượt hiện tại là player 1
     (againstAgent && playerNumber === 1 && gameState.currentPlayer === 1 && !gameState.winner && !gameState.draw);
-  
-  // Debug thông tin trước khi render
+
   console.log("Rendering with gameState:", gameState);
   console.log("Current player from gameState:", gameState.currentPlayer);
   console.log("Player number:", playerNumber);

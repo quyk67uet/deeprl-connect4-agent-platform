@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  reactStrictMode: false,
   output: 'export',
   images: {
     unoptimized: true,
   },
   trailingSlash: true,
   
-  // Thêm cấu hình này
   async headers() {
     return [
       {
@@ -15,7 +14,15 @@ const nextConfig = {
         headers: [
           {
             key: 'Access-Control-Allow-Origin',
-            value: '*', // Hoặc chỉ định domain chính xác
+            value: '*', 
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET, POST, PUT, DELETE, OPTIONS',
+          },
+          {
+            key: 'Access-Control-Allow-Headers', 
+            value: 'X-Requested-With, Content-Type, Authorization',
           },
         ],
       },

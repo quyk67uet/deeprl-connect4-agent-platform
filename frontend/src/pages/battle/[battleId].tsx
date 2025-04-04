@@ -10,6 +10,11 @@ import styles from '../../../styles/Battle.module.css';
 // WebSocket URL
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
 
+// Maximum number of reconnection attempts
+const MAX_RECONNECT_ATTEMPTS = 3;
+// Reconnection delay in milliseconds
+const RECONNECT_DELAY = 2000;
+
 interface GameState {
   board: number[][];
   currentPlayer: number;
@@ -61,88 +66,160 @@ const BattlePage: React.FC = () => {
   useEffect(() => {
     if (!battleId) return;
     
-    const ws = new WebSocket(`${WS_URL}/ws/battle/${battleId}`);
+    let ws: WebSocket | null = null;
+    let reconnectAttempts = 0;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
     
-    ws.onopen = () => {
-      setConnected(true);
-      console.log('Connected to the battle server');
-    };
-    
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('Received battle data:', data);
+    const connectWebSocket = () => {
+      // Clear any existing reconnection timeout
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
+      }
       
-      if (data.type === 'battle_state' || data.type === 'battle_update' || data.type === 'battle_complete') {
-        // Convert state format
-        const gameState = {
-          board: data.state.board,
-          currentPlayer: data.state.current_player,
-          winner: data.state.winner,
-          draw: data.state.game_over && !data.state.winner
-        };
-        
-        // Update battle state
-        setBattleState(prev => ({
-          ...prev,
-          gameState,
-          status: data.status,
-          currentTurn: data.current_turn,
-          ai1Url: data.ai1_url,
-          ai2Url: data.ai2_url,
-          lastMove: data.last_move,
-          movingPlayer: data.moving_player
-        }));
-        
-        // Update spectator count if provided
-        if (data.spectator_count) {
-          setSpectatorCount(data.spectator_count);
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
         }
+        ws = null;
+      }
+      
+      try {
+        // Create new WebSocket connection
+        console.log(`Connecting to WebSocket at ${WS_URL}/ws/battle/${battleId}`);
+        ws = new WebSocket(`${WS_URL}/ws/battle/${battleId}`);
         
-        // Show notifications for events
-        if (data.type === 'battle_update' && data.last_move !== undefined) {
-          const player = data.moving_player === 1 ? 'Red' : 'Yellow';
-          toast.info(`${player} played in column ${data.last_move + 1}`);
-        }
-        
-        if (data.type === 'battle_complete') {
-          if (data.status === 'player1_win') {
-            toast.success('Red AI wins!');
-          } else if (data.status === 'player2_win') {
-            toast.success('Yellow AI wins!');
-          } else if (data.status === 'draw') {
-            toast.info('Game ended in a draw!');
+        // Set a timeout to detect connection issues
+        const connectionTimeout = setTimeout(() => {
+          if (ws && (ws.readyState === WebSocket.CONNECTING)) {
+            console.log('WebSocket connection timeout - forcing close and reconnect');
+            ws.close();
+            
+            // Try to reconnect if under max attempts
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+              reconnectAttempts++;
+              console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+              toast.info(`Connection timeout. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+              
+              // Set timeout for reconnection with exponential backoff
+              const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1);
+              reconnectTimeout = setTimeout(connectWebSocket, delay);
+            }
           }
+        }, 5000); // 5 second timeout
+        
+        if (ws) {
+          ws.onopen = () => {
+            clearTimeout(connectionTimeout);
+            setConnected(true);
+            console.log('Connected to the battle server');
+            // Reset reconnect attempts on successful connection
+            reconnectAttempts = 0;
+          };
+          
+          ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log('Received battle data:', data);
+            
+            if (data.type === 'battle_state' || data.type === 'battle_update' || data.type === 'battle_complete') {
+              // Convert state format
+              const gameState = {
+                board: data.state.board,
+                currentPlayer: data.state.current_player,
+                winner: data.state.winner,
+                draw: data.state.game_over && !data.state.winner
+              };
+              
+              // Update battle state
+              setBattleState(prev => ({
+                ...prev,
+                gameState,
+                status: data.status,
+                currentTurn: data.current_turn,
+                ai1Url: data.ai1_url,
+                ai2Url: data.ai2_url,
+                lastMove: data.last_move,
+                movingPlayer: data.moving_player
+              }));
+              
+              // Update spectator count if provided
+              if (data.spectator_count) {
+                setSpectatorCount(data.spectator_count);
+              }
+              
+              // Show notifications for events
+              if (data.type === 'battle_update' && data.last_move !== undefined) {
+                const player = data.moving_player === 1 ? 'Red' : 'Yellow';
+                toast.info(`${player} played in column ${data.last_move + 1}`);
+              }
+              
+              if (data.type === 'battle_complete') {
+                if (data.status === 'player1_win') {
+                  toast.success('Red AI wins!');
+                } else if (data.status === 'player2_win') {
+                  toast.success('Yellow AI wins!');
+                } else if (data.status === 'draw') {
+                  toast.info('Game ended in a draw!');
+                }
+              }
+            }
+            else if (data.type === 'player_joined') {
+              toast.info(`Someone joined to watch the battle`);
+            }
+            else if (data.type === 'spectator_count') {
+              setSpectatorCount(data.count);
+              toast.info(`${data.count} spectators are watching this battle`);
+            }
+            else if (data.type === 'player_left') {
+              toast.info(`Someone left the battle`);
+            }
+          };
+          
+          ws.onclose = (event) => {
+            setConnected(false);
+            console.log(`Disconnected from the battle server: ${event.code} ${event.reason}`);
+            
+            // Attempt to reconnect if not cleanly closed and under max attempts
+            if (!event.wasClean && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+              reconnectAttempts++;
+              console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+              toast.info(`Connection lost. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+              
+              // Set timeout for reconnection with exponential backoff
+              const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1);
+              reconnectTimeout = setTimeout(connectWebSocket, delay);
+            } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+              toast.error('Failed to connect after multiple attempts. Please refresh the page.');
+            }
+          };
+          
+          ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            // Don't show toast here as onclose will also be called
+          };
         }
-      }
-      // Thêm xử lý cho sự kiện player_joined và player_left
-      else if (data.type === 'player_joined') {
-        // Hiển thị thông báo khi có người xem mới tham gia
-        toast.info(`Someone joined to watch the battle`);
-      }
-      else if (data.type === 'spectator_count') {
-        // Hiển thị số người đang xem trận đấu
-        setSpectatorCount(data.count);
-        toast.info(`${data.count} spectators are watching this battle`);
-      }
-      else if (data.type === 'player_left') {
-        toast.info(`Someone left the battle`);
+        
+        setSocket(ws);
+      } catch (error) {
+        console.error('WebSocket connection error:', error);
+        // Don't show toast here as onclose will also be called
       }
     };
     
-    ws.onclose = () => {
-      setConnected(false);
-      console.log('Disconnected from the battle server');
-    };
-    
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      toast.error('Connection error. Please try again later.');
-    };
-    
-    setSocket(ws);
+    // Start the initial connection
+    connectWebSocket();
     
     return () => {
-      ws.close();
+      // Clean up
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      
+      if (ws) {
+        // Set a flag to prevent reconnection attempts on intentional closure
+        ws.onclose = null;
+        ws.close();
+      }
     };
   }, [battleId]);
   
@@ -153,9 +230,7 @@ const BattlePage: React.FC = () => {
       let ai1Url: string | null = ai1Input.trim();
       let ai2Url: string | null = ai2Input.trim();
       
-      // If URLs don't end with the required endpoint, add it
       if (ai1Url && !ai1Url.includes('/api/connect4-move')) {
-        // If URL ends with /, remove it before adding the endpoint
         if (ai1Url.endsWith('/')) {
           ai1Url = ai1Url.slice(0, -1);
         }
