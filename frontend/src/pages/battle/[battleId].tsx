@@ -280,11 +280,51 @@ const BattlePage: React.FC = () => {
   // Copy battle ID to clipboard
   const copyBattleId = useCallback(() => {
     if (battleId) {
-      navigator.clipboard.writeText(battleId.toString())
-        .then(() => toast.success('Battle ID copied to clipboard!'))
-        .catch(err => toast.error('Failed to copy Battle ID'));
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(battleId.toString())
+          .then(() => toast.success('Battle ID copied to clipboard!'))
+          .catch(err => {
+            fallbackCopyTextToClipboard(battleId.toString());
+          });
+      } else {
+        fallbackCopyTextToClipboard(battleId.toString());
+      }
     }
   }, [battleId]);
+
+  const fallbackCopyTextToClipboard = (text: string) => {
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      
+      textArea.style.position = 'fixed';
+      textArea.style.top = '0';
+      textArea.style.left = '0';
+      textArea.style.width = '2em';
+      textArea.style.height = '2em';
+      textArea.style.padding = '0';
+      textArea.style.border = 'none';
+      textArea.style.outline = 'none';
+      textArea.style.boxShadow = 'none';
+      textArea.style.background = 'transparent';
+      
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      const successful = document.execCommand('copy');
+      
+      document.body.removeChild(textArea);
+      
+      if (successful) {
+        toast.success('Battle ID copied to clipboard!');
+      } else {
+        toast.error('Failed to copy Battle ID. Please copy it manually.');
+      }
+    } catch (err) {
+      toast.error('Failed to copy Battle ID. Please copy it manually.');
+    }
+  };
   
   // Get status message
   const getStatusMessage = () => {
