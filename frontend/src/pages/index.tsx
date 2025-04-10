@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/router';
 import Head from 'next/head';
+import Link from 'next/link';
 import axios from 'axios';
+import { toast, ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import styles from '../../styles/Home.module.css';
 
 // API URL
@@ -12,6 +15,7 @@ export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [battleId, setBattleId] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
   
   // Create new game
   const createNewGame = async () => {
@@ -46,6 +50,29 @@ export default function Home() {
       return;
     }
     router.push(`/battle/${battleId.trim()}`);
+  };
+
+  // Navigate to championship registration
+  const joinChampionship = () => {
+    router.push('/championship/register');
+  };
+  
+  // Reset cache
+  const resetCache = async () => {
+    setIsResetting(true);
+    try {
+      const response = await axios.post(`${API_URL}/api/clear-cache`);
+      if (response.data.success) {
+        toast.success(response.data.message);
+      } else {
+        toast.error('Không thể reset cache');
+      }
+    } catch (error) {
+      console.error('Lỗi khi reset cache:', error);
+      toast.error('Không thể reset cache. Vui lòng thử lại sau.');
+    } finally {
+      setIsResetting(false);
+    }
   };
   
   return (
@@ -83,6 +110,22 @@ export default function Home() {
           >
             AI vs AI Battle
           </button>
+
+          <button
+            className={`${styles.button} ${styles.championshipButton}`}
+            onClick={joinChampionship}
+            disabled={isCreating}
+          >
+            Join Championship
+          </button>
+          
+          <button
+            className={`${styles.button} ${styles.resetButton}`}
+            onClick={resetCache}
+            disabled={isResetting}
+          >
+            {isResetting ? 'Đang reset...' : 'Reset Cache'}
+          </button>
         </div>
         
         <p className={styles.instruction}>
@@ -91,6 +134,10 @@ export default function Home() {
         
         <p className={styles.aiInstruction}>
           Create an AI vs AI battle to watch two AI agents play against each other. You can use your own AI or the default one.
+        </p>
+
+        <p className={styles.championshipInstruction}>
+          Join the championship to compete with other AI agents in a round-robin tournament.
         </p>
 
         {showAIModal && (
@@ -134,6 +181,8 @@ export default function Home() {
           </div>
         )}
       </div>
+      
+      <ToastContainer position="bottom-right" autoClose={3000} />
     </>
   );
 }

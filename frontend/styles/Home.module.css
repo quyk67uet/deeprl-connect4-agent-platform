@@ -99,6 +99,24 @@
   background-color: #218838;
 }
 
+.championshipButton {
+  background-color: #9c27b0;
+}
+
+.championshipButton:hover {
+  background-color: #7b1fa2;
+}
+
+.resetButton {
+  background-color: #e74c3c;
+  width: 100%;
+  margin-top: 15px;
+}
+
+.resetButton:hover {
+  background-color: #c0392b;
+}
+
 .instruction {
   margin-top: 30px;
   font-size: 1.1rem;
@@ -115,6 +133,17 @@
   background-color: rgba(40, 167, 69, 0.1);
   border-radius: 10px;
   border-left: 4px solid #28a745;
+}
+
+.championshipInstruction {
+  margin-top: 20px;
+  font-size: 1.1rem;
+  color: #e879f9;
+  line-height: 1.6;
+  padding: 15px;
+  background-color: rgba(156, 39, 176, 0.1);
+  border-radius: 10px;
+  border-left: 4px solid #9c27b0;
 }
 
 /* Modal styles */

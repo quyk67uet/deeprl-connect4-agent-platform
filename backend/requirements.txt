@@ -1,6 +1,6 @@
 # Core libraries
 numpy==1.24.3  # Sử dụng NumPy 1.x để tránh lỗi tương thích
-torch==2.5.1+cpu
+torch==2.5.1
 gymnasium==0.29.1
 stable-baselines3==2.1.0
 
@@ -10,6 +10,7 @@ uvicorn[standard]==0.32.0
 python-multipart==0.0.17
 pydantic==2.10.6
 websockets==14.1
+redis==5.0.1  # For Redis integration
 
 # Other dependencies
 pandas==2.2.1

@@ -3,9 +3,18 @@ import uuid
 import json
 import asyncio
 import logging
-from typing import Dict, List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+import time
+import random
+import httpx
+import socket
+import subprocess
+from datetime import datetime
+from typing import Dict, List, Optional, Set, Tuple, Any
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, HttpUrl
+import redis.asyncio as redis
+import platform
 
 from game_logic import Connect4Game
 from agent_loader import load_agent, get_agent_move
@@ -24,6 +33,369 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Redis configuration
+redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+logger.info(f"Attempting to connect to Redis at: {redis_url}")
+
+# Global Redis connection pool
+redis_pool = None
+
+class StorageManager:
+    """
+    Storage manager that provides Redis-like interface with fallback to in-memory storage.
+    This allows the application to run even if Redis is not available.
+    """
+    def __init__(self):
+        self.redis_client = None
+        self.memory_storage = {}  # In-memory fallback
+        self.use_redis = False
+    
+    async def initialize(self, redis_client=None):
+        """Initialize with optional Redis client"""
+        self.redis_client = redis_client
+        self.use_redis = redis_client is not None
+        
+        if self.use_redis:
+            try:
+                await self.redis_client.ping()
+                logger.info("Redis storage initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to initialize Redis: {e}")
+                self.use_redis = False
+                self.redis_client = None
+        
+        if not self.use_redis:
+            logger.info("Using in-memory storage")
+        
+        return self.use_redis
+    
+    async def keys(self, pattern):
+        """Get keys matching the pattern"""
+        if self.use_redis:
+            try:
+                return await self.redis_client.keys(pattern)
+            except Exception as e:
+                logger.error(f"Redis keys operation failed: {e}")
+                # Fall back to memory storage
+        
+        # Memory storage implementation
+        return [key.encode('utf-8') for key in self.memory_storage.keys() 
+                if key.startswith(pattern.replace("*", ""))]
+    
+    async def hgetall(self, key):
+        """Get all fields and values in a hash"""
+        if self.use_redis:
+            try:
+                return await self.redis_client.hgetall(key)
+            except Exception as e:
+                logger.error(f"Redis hgetall operation failed: {e}")
+                # Fall back to memory storage
+        
+        # Memory storage implementation
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        if key_str in self.memory_storage:
+            result = {}
+            for field, value in self.memory_storage[key_str].items():
+                field_bytes = field.encode('utf-8') if isinstance(field, str) else field
+                value_bytes = value.encode('utf-8') if isinstance(value, str) else value
+                result[field_bytes] = value_bytes
+            return result
+        return {}
+    
+    async def hset(self, key, field, value):
+        """Set field in a hash to value"""
+        if self.use_redis:
+            try:
+                return await self.redis_client.hset(key, field, value)
+            except Exception as e:
+                logger.error(f"Redis hset operation failed: {e}")
+                # Fall back to memory storage
+        
+        # Memory storage implementation
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        field_str = field.decode('utf-8') if isinstance(field, bytes) else field
+        value_str = value.decode('utf-8') if isinstance(value, bytes) and not isinstance(value, bool) else value
+        
+        if key_str not in self.memory_storage:
+            self.memory_storage[key_str] = {}
+        
+        self.memory_storage[key_str][field_str] = value_str
+        return 1
+    
+    async def hmset(self, key, mapping):
+        """Set multiple fields in a hash"""
+        if self.use_redis:
+            try:
+                return await self.redis_client.hmset(key, mapping)
+            except Exception as e:
+                logger.error(f"Redis hmset operation failed: {e}")
+                # Fall back to memory storage
+                
+        # Memory storage implementation
+        key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+        
+        if key_str not in self.memory_storage:
+            self.memory_storage[key_str] = {}
+            
+        for field, value in mapping.items():
+            field_str = field.decode('utf-8') if isinstance(field, bytes) else field
+            value_str = value.decode('utf-8') if isinstance(value, bytes) and not isinstance(value, bool) else value
+            self.memory_storage[key_str][field_str] = value_str
+            
+        return True
+    
+    async def delete(self, *keys):
+        """Delete one or more keys"""
+        if self.use_redis:
+            try:
+                return await self.redis_client.delete(*keys)
+            except Exception as e:
+                logger.error(f"Redis delete operation failed: {e}")
+                # Fall back to memory storage
+                
+        # Memory storage implementation
+        count = 0
+        for key in keys:
+            key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+            if key_str in self.memory_storage:
+                del self.memory_storage[key_str]
+                count += 1
+        return count
+
+    async def clear_all(self):
+        """Clear all data in storage"""
+        self.memory_storage.clear()
+        if self.use_redis:
+            try:
+                await self.redis_client.flushall()
+            except Exception as e:
+                logger.error(f"Error clearing Redis: {e}")
+
+# Create storage manager instance
+storage = StorageManager()
+
+# Create Redis connection pool - will be initialized during startup
+async def init_redis_pool():
+    """Initialize the Redis connection pool with error handling and retries"""
+    global redis_pool
+    
+    max_retries = 3
+    retry_count = 0
+    retry_delay = 2  # seconds
+    
+    while retry_count < max_retries:
+        try:
+            logger.info(f"Attempting to connect to Redis: {redis_url} (attempt {retry_count + 1}/{max_retries})")
+            # Create a connection pool
+            redis_pool = redis.ConnectionPool.from_url(redis_url)
+            
+            # Create a test client to verify the connection
+            test_client = redis.Redis(connection_pool=redis_pool)
+            await test_client.ping()
+            
+            # Initialize storage manager with Redis
+            redis_success = await storage.initialize(test_client)
+            return redis_success
+            
+        except (redis.ConnectionError, redis.TimeoutError) as e:
+            logger.error(f"Redis connection error: {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error("Failed to connect to Redis after maximum retries")
+                # Initialize storage manager without Redis
+                await storage.initialize()
+                return False
+                
+        except Exception as e:
+            logger.error(f"Unexpected error connecting to Redis: {e}")
+            # Initialize storage manager without Redis
+            await storage.initialize()
+            return False
+            
+    return False
+
+async def get_redis_connection():
+    """Get a Redis connection from the pool"""
+    if redis_pool is None:
+        return None
+        
+    try:
+        redis_conn = redis.Redis(connection_pool=redis_pool)
+        # Quick connection check
+        await redis_conn.ping()
+        return redis_conn
+    except Exception as e:
+        logger.error(f"Error getting Redis connection: {e}")
+        return None
+
+async def clear_redis_cache():
+    """Clear all data in Redis cache"""
+    try:
+        redis_conn = await get_redis_connection()
+        if redis_conn is None:
+            logger.warning("Cannot clear Redis cache: connection not available")
+            return False
+            
+        # Get all keys and delete them
+        keys = await redis_conn.keys("*")
+        if keys:
+            logger.info(f"Clearing {len(keys)} keys from Redis cache")
+            await redis_conn.delete(*keys)
+            return True
+        else:
+            logger.info("Redis cache is already empty")
+            return True
+    except Exception as e:
+        logger.error(f"Error clearing Redis cache: {e}")
+        return False
+
+# Championship Data Models
+class TeamRegistration(BaseModel):
+    team_name: str
+    api_endpoint: str
+
+class Match:
+    def __init__(self, match_id: str, team_a: str, team_b: str, round_number: int):
+        self.match_id = match_id
+        self.team_a = team_a
+        self.team_b = team_b
+        self.round_number = round_number
+        self.games = []
+        self.status = "scheduled"  # scheduled, in_progress, finished
+        self.winner = None  # team_a, team_b, draw, None
+        self.team_a_points = 0
+        self.team_b_points = 0
+        self.start_time = None
+        self.end_time = None
+        self.current_game = 0  # 0-based index
+        self.spectator_count = 0
+
+class Game:
+    def __init__(self, game_number: int, first_player: str):
+        self.game_number = game_number  # 1, 2, 3, 4
+        self.first_player = first_player  # team_a or team_b
+        self.winner = None  # team_a, team_b, draw, None
+        self.status = "scheduled"  # scheduled, in_progress, finished
+        self.game_state = None
+
+# Championship Manager
+class ChampionshipManager:
+    def __init__(self):
+        self.teams = {}  # team_name -> api_endpoint
+        self.matches = {}  # match_id -> Match object
+        self.leaderboard = {}  # team_name -> points
+        self.rounds = []  # list of list of match_ids for each round
+        self.current_round = 0
+        self.status = "waiting"  # waiting, in_progress, finished
+        self.championship_id = str(uuid.uuid4())
+
+    def add_team(self, team_name: str, api_endpoint: str) -> bool:
+        if team_name in self.teams:
+            return False
+        self.teams[team_name] = api_endpoint
+        self.leaderboard[team_name] = 0
+        return True
+
+    def generate_schedule(self):
+        """Generate a round-robin tournament schedule for all teams."""
+        if len(self.teams) < 2:
+            logger.error("Not enough teams to generate schedule")
+            return False
+        
+        team_names = list(self.teams.keys())
+        
+        # If odd number of teams, add a dummy team for scheduling
+        if len(team_names) % 2 == 1:
+            team_names.append(None)
+        
+        n = len(team_names)
+        rounds = []
+        
+        for i in range(n - 1):
+            round_matches = []
+            for j in range(n // 2):
+                team_a = team_names[j]
+                team_b = team_names[n - 1 - j]
+                
+                # Skip matches involving the dummy team
+                if team_a is not None and team_b is not None:
+                    match_id = str(uuid.uuid4())
+                    match = Match(match_id, team_a, team_b, i)
+                    self.matches[match_id] = match
+                    round_matches.append(match_id)
+            
+            rounds.append(round_matches)
+            
+            # Rotate the teams (keeping the first team fixed)
+            team_names = [team_names[0]] + [team_names[-1]] + team_names[1:-1]
+        
+        self.rounds = rounds
+        return True
+
+    def get_team_endpoint(self, team_name: str) -> Optional[str]:
+        return self.teams.get(team_name)
+
+    def update_leaderboard(self, match_id: str):
+        """Update leaderboard after a match is finished."""
+        match = self.matches.get(match_id)
+        if not match or match.status != "finished":
+            return
+        
+        # Award match points: 3 for win, 1 for draw, 0 for loss
+        if match.winner == "team_a":
+            self.leaderboard[match.team_a] += 3
+        elif match.winner == "team_b":
+            self.leaderboard[match.team_b] += 3
+        elif match.winner == "draw":
+            self.leaderboard[match.team_a] += 1
+            self.leaderboard[match.team_b] += 1
+
+    def get_leaderboard(self) -> List[Dict]:
+        """Return leaderboard sorted by points."""
+        sorted_teams = sorted(
+            self.leaderboard.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )
+        return [{"team_name": team, "points": points} for team, points in sorted_teams]
+
+    def get_match_by_id(self, match_id: str) -> Optional[Match]:
+        return self.matches.get(match_id)
+
+    def all_matches_in_round_finished(self, round_number: int) -> bool:
+        """Check if all matches in a round are finished."""
+        if round_number >= len(self.rounds):
+            return False
+        
+        for match_id in self.rounds[round_number]:
+            match = self.matches.get(match_id)
+            if match and match.status != "finished":
+                return False
+        return True
+
+    def get_current_round_spectator_count(self) -> int:
+        """Get total spectator count for all matches in current round."""
+        if self.current_round >= len(self.rounds):
+            return 0
+        
+        total_count = 0
+        for match_id in self.rounds[self.current_round]:
+            match = self.matches.get(match_id)
+            if match:
+                total_count += match.spectator_count
+        return total_count
+
+    def championship_finished(self) -> bool:
+        """Check if championship is finished."""
+        return self.current_round >= len(self.rounds)
+
+# Initialize championship manager
+championship_manager = ChampionshipManager()
 
 # Path to the trained model
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models/connect4_ppo_agent.zip")
@@ -360,7 +732,6 @@ async def make_external_ai_move(game_id: str, ai_url: str):
         logger.info(f"Request data: {data}")
         
         # Make request to external AI
-        import httpx
         async with httpx.AsyncClient() as client:
             logger.info(f"Sending request to {ai_url}")
             response = await client.post(ai_url, json=data, timeout=5.0)
@@ -381,7 +752,6 @@ async def make_external_ai_move(game_id: str, ai_url: str):
                 logger.error(f"Error response: {response.text}")
             
         # Fallback to random move if request fails
-        import random
         valid_moves = game.get_valid_moves()
         if valid_moves:
             random_move = random.choice(valid_moves)
@@ -390,7 +760,6 @@ async def make_external_ai_move(game_id: str, ai_url: str):
     except Exception as e:
         logger.error(f"Error getting external AI move: {e}")
         # Fallback to random move
-        import random
         valid_moves = game.get_valid_moves()
         if valid_moves:
             random_move = random.choice(valid_moves)
@@ -475,7 +844,6 @@ async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Op
             
             # Get move from external AI
             try:
-                import httpx
                 async with httpx.AsyncClient() as client:
                     response = await client.post(ai_url, json=data, timeout=5.0)
                     
@@ -554,132 +922,182 @@ async def websocket_battle(websocket: WebSocket, battle_id: str):
         connections[battle_id] = []
     connections[battle_id].append(websocket)
     
-    # Broadcast spectator count to all connections
-    spectator_count = len(connections[battle_id])
-    await manager.broadcast(
-        {
+    # Check if this is a championship match
+    match = championship_manager.get_match_by_id(battle_id)
+    if match:
+        # This is a championship match
+        match.spectator_count += 1
+        
+        # Send match info
+        await websocket.send_json({
+            "type": "championship_match_info",
+            "team_a": match.team_a,
+            "team_b": match.team_b,
+            "status": match.status,
+            "round": match.round_number + 1,
+            "current_game": match.current_game + 1 if match.games else 0,
+            "team_a_points": match.team_a_points,
+            "team_b_points": match.team_b_points,
+            "spectator_count": match.spectator_count
+        })
+        
+        # If match has games, send game info for current game
+        if match.games and match.current_game < len(match.games):
+            game = match.games[match.current_game]
+            await websocket.send_json({
+                "type": "game_info",
+                "game_number": game.game_number,
+                "first_player": game.first_player,
+                "status": game.status,
+                "state": game.game_state
+            })
+        
+        # Broadcast spectator count update
+        await broadcast_battle_update(battle_id, {
             "type": "spectator_count",
-            "count": spectator_count
-        },
-        battle_id
-    )
-    
-    # Notify others that someone joined
-    await manager.broadcast(
-        {
-            "type": "player_joined",
-            "player": 0  # 0 indicates spectator
-        },
-        battle_id,
-        websocket  # Exclude the current connection from receiving this message
-    )
-    
-    # Create battle if it doesn't exist
-    if battle_id not in ai_battles:
-        ai_battles[battle_id] = {
-            "game": Connect4Game(),
-            "status": "waiting",
-            "current_turn": 0,
-            "moves": [],
-            "ai1_url": None,
-            "ai2_url": None
-        }
-    
-    # Send current battle state
-    battle = ai_battles[battle_id]
-    await websocket.send_json({
-        "type": "battle_state",
-        "state": battle["game"].get_state(),
-        "status": battle["status"],
-        "current_turn": battle["current_turn"],
-        "battle_id": battle_id,
-        "ai1_url": battle["ai1_url"],
-        "ai2_url": battle["ai2_url"],
-        "spectator_count": spectator_count
-    })
+            "count": match.spectator_count
+        })
+    else:
+        # Regular AI battle
+        if battle_id not in ai_battles:
+            ai_battles[battle_id] = {
+                "game": Connect4Game(),
+                "status": "waiting",
+                "current_turn": 0,
+                "moves": [],
+                "ai1_url": None,
+                "ai2_url": None
+            }
+        
+        # Broadcast spectator count to all connections
+        spectator_count = len(connections[battle_id])
+        await manager.broadcast(
+            {
+                "type": "spectator_count",
+                "count": spectator_count
+            },
+            battle_id
+        )
+        
+        # Notify others that someone joined
+        await manager.broadcast(
+            {
+                "type": "player_joined",
+                "player": 0  # 0 indicates spectator
+            },
+            battle_id,
+            websocket  # Exclude the current connection from receiving this message
+        )
+        
+        # Send current battle state
+        battle = ai_battles[battle_id]
+        await websocket.send_json({
+            "type": "battle_state",
+            "state": battle["game"].get_state(),
+            "status": battle["status"],
+            "current_turn": battle["current_turn"],
+            "battle_id": battle_id,
+            "ai1_url": battle["ai1_url"],
+            "ai2_url": battle["ai2_url"],
+            "spectator_count": spectator_count
+        })
     
     try:
+        # Keep connection open for messages
         while True:
             data = await websocket.receive_json()
-            logger.info(f"WebSocket message received: {data}")
+            logger.info(f"WebSocket message received for battle {battle_id}: {data}")
             
-            if data["type"] == "start_battle":
-                logger.info(f"Battle start requested with data: {data}")
-                ai1_url = data.get("ai1_url") 
-                ai2_url = data.get("ai2_url")
+            # Only process commands if not a championship match
+            if not match:
+                if data["type"] == "start_battle":
+                    logger.info(f"Battle start requested with data: {data}")
+                    ai1_url = data.get("ai1_url") 
+                    ai2_url = data.get("ai2_url")
+                    
+                    logger.info(f"AI URLs: ai1_url={ai1_url}, ai2_url={ai2_url}")
+                    
+                    # Update AI URLs
+                    battle["ai1_url"] = ai1_url
+                    battle["ai2_url"] = ai2_url
+                    
+                    # Start simulation
+                    asyncio.create_task(simulate_ai_battle(
+                        battle_id, 
+                        ai1_url, 
+                        ai2_url, 
+                        max_turns=data.get("max_turns", 50)
+                    ))
                 
-                logger.info(f"AI URLs: ai1_url={ai1_url}, ai2_url={ai2_url}")
-                
-                # Update AI URLs
-                battle["ai1_url"] = ai1_url
-                battle["ai2_url"] = ai2_url
-                
-                # Start simulation
-                asyncio.create_task(simulate_ai_battle(
-                    battle_id, 
-                    ai1_url, 
-                    ai2_url, 
-                    max_turns=data.get("max_turns", 50)
-                ))
-            
-            elif data["type"] == "reset_battle":
-                # Cancel any ongoing battle
-                for task in asyncio.all_tasks():
-                    if task.get_name() == f"battle_{battle_id}":
-                        task.cancel()
-                
-                # Reset game
-                battle["game"].reset()
-                battle["status"] = "waiting"
-                battle["current_turn"] = 0
-                battle["moves"] = []
-                
-                # Broadcast reset
-                await manager.broadcast(
-                    {
-                        "type": "battle_state",
-                        "state": battle["game"].get_state(),
-                        "status": battle["status"],
-                        "current_turn": battle["current_turn"],
-                        "battle_id": battle_id,
-                        "ai1_url": battle["ai1_url"],
-                        "ai2_url": battle["ai2_url"],
-                        "spectator_count": len(connections[battle_id])
-                    },
-                    battle_id
-                )
+                elif data["type"] == "reset_battle":
+                    # Cancel any ongoing battle
+                    for task in asyncio.all_tasks():
+                        if task.get_name() == f"battle_{battle_id}":
+                            task.cancel()
+                    
+                    # Reset game
+                    battle["game"].reset()
+                    battle["status"] = "waiting"
+                    battle["current_turn"] = 0
+                    battle["moves"] = []
+                    
+                    # Broadcast reset
+                    await manager.broadcast(
+                        {
+                            "type": "battle_state",
+                            "state": battle["game"].get_state(),
+                            "status": battle["status"],
+                            "current_turn": battle["current_turn"],
+                            "battle_id": battle_id,
+                            "ai1_url": battle["ai1_url"],
+                            "ai2_url": battle["ai2_url"],
+                            "spectator_count": len(connections[battle_id])
+                        },
+                        battle_id
+                    )
     
     except WebSocketDisconnect:
+        # Handle disconnect
         if battle_id in connections and websocket in connections[battle_id]:
             connections[battle_id].remove(websocket)
             
-            # Notify remaining spectators that someone left
-            if connections[battle_id]:
-                spectator_count = len(connections[battle_id])
-                await manager.broadcast(
-                    {
-                        "type": "player_left",
-                        "player": 0  # 0 indicates spectator
-                    },
-                    battle_id
-                )
+            # If this is a championship match, update spectator count
+            if match:
+                match.spectator_count -= 1
+                # Broadcast updated spectator count
+                await broadcast_battle_update(battle_id, {
+                    "type": "spectator_count",
+                    "count": match.spectator_count
+                })
+            else:
+                # Regular AI battle disconnect handling
+                # Notify remaining spectators that someone left
+                if connections[battle_id]:
+                    spectator_count = len(connections[battle_id])
+                    await manager.broadcast(
+                        {
+                            "type": "player_left",
+                            "player": 0  # 0 indicates spectator
+                        },
+                        battle_id
+                    )
+                    
+                    # Update spectator count
+                    await manager.broadcast(
+                        {
+                            "type": "spectator_count",
+                            "count": spectator_count
+                        },
+                        battle_id
+                    )
                 
-                # Update spectator count
-                await manager.broadcast(
-                    {
-                        "type": "spectator_count",
-                        "count": spectator_count
-                    },
-                    battle_id
-                )
-            
-            # If no connections left, cleanup
-            if not connections[battle_id]:
-                if battle_id in ai_battles:
-                    del ai_battles[battle_id]
-                del connections[battle_id]
+                # If no connections left, cleanup
+                if not connections[battle_id]:
+                    if battle_id in ai_battles:
+                        del ai_battles[battle_id]
+                    del connections[battle_id]
     except Exception as e:
-        logger.error(f"Error in battle websocket: {e}")
+        logger.error(f"Error in battle websocket for {battle_id}: {e}")
 
 # API to create an AI battle
 @app.post("/api/create-battle")
@@ -770,4 +1188,613 @@ async def connect4_move(request: Request):
 @app.get("/api/test")
 async def test_endpoint():
     return {"status": "ok", "message": "Test endpoint is working"}
+
+# Championship Registration API
+@app.post("/api/championship/register")
+async def register_team(team_data: TeamRegistration, background_tasks: BackgroundTasks):
+    # Validate if team name is unique
+    if team_data.team_name in championship_manager.teams:
+        raise HTTPException(status_code=400, detail="Team name already registered")
+
+    # Validate the endpoint
+    test_game_state = {
+        "board": [[0]*7 for _ in range(6)],
+        "current_player": 1,
+        "valid_moves": [0,1,2,3,4,5,6]
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                team_data.api_endpoint, 
+                json=test_game_state, 
+                timeout=5.0
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"API endpoint returned status code {response.status_code}"
+                )
+            
+            data = response.json()
+            if "move" not in data or not isinstance(data["move"], int) or data["move"] not in test_game_state["valid_moves"]:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="API endpoint did not return a valid move"
+                )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=400, detail="API endpoint timed out")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=400, detail=f"Error connecting to API endpoint: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error validating API endpoint: {str(e)}")
+
+    # Register the team
+    success = championship_manager.add_team(team_data.team_name, team_data.api_endpoint)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to register team")
+
+    # Lưu vào storage
+    try:
+        await storage.hset(f"team:{team_data.team_name}", "api_endpoint", team_data.api_endpoint)
+        logger.info(f"Stored team {team_data.team_name} in storage")
+    except Exception as e:
+        logger.error(f"Error storing team in storage: {e}")
+    
+    # Update team count
+    team_count = len(championship_manager.teams)
+    max_teams = 19  # Giới hạn số đội (có thể điều chỉnh)
+    logger.info(f"Team {team_data.team_name} registered. Total teams: {team_count}/{max_teams}")
+    
+    # Đã bỏ đoạn code tự động bắt đầu championship khi đủ 19 đội
+    
+    return {"success": True, "message": f"Team registered successfully. {team_count}/{max_teams} teams registered."}
+
+# Get championship status
+@app.get("/api/championship/status")
+async def get_championship_status():
+    team_count = len(championship_manager.teams)
+    
+    return {
+        "status": championship_manager.status,
+        "team_count": team_count,
+        "current_round": championship_manager.current_round + 1 if championship_manager.rounds else 0,
+        "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0
+    }
+
+# Get championship leaderboard
+@app.get("/api/championship/leaderboard")
+async def get_championship_leaderboard():
+    return championship_manager.get_leaderboard()
+
+# Get championship schedule
+@app.get("/api/championship/schedule")
+async def get_championship_schedule():
+    if not championship_manager.rounds:
+        return {"rounds": []}
+    
+    schedule = []
+    for round_idx, round_matches in enumerate(championship_manager.rounds):
+        matches = []
+        for match_id in round_matches:
+            match = championship_manager.matches.get(match_id)
+            if match:
+                matches.append({
+                    "match_id": match.match_id,
+                    "team_a": match.team_a,
+                    "team_b": match.team_b,
+                    "status": match.status,
+                    "winner": match.winner,
+                    "team_a_points": match.team_a_points,
+                    "team_b_points": match.team_b_points
+                })
+        schedule.append({"round": round_idx + 1, "matches": matches})
+    
+    return {"rounds": schedule}
+
+# Championship start helper
+async def start_championship_after_delay(delay_seconds: int):
+    """Start the championship after a delay."""
+    await asyncio.sleep(delay_seconds)
+    
+    # Generate the schedule
+    logger.info("Generating championship schedule...")
+    championship_manager.generate_schedule()
+    
+    # Set championship status to in_progress
+    championship_manager.status = "in_progress"
+    
+    # Broadcast status change to dashboard
+    await broadcast_dashboard_update("status_update", {
+        "status": championship_manager.status,
+        "message": "Championship has started!",
+        "schedule": await get_championship_schedule()
+    })
+    
+    # Start the first round
+    await start_round(0)
+
+async def start_round(round_number: int):
+    """Start a round of matches."""
+    if round_number >= len(championship_manager.rounds):
+        # Championship is finished
+        championship_manager.status = "finished"
+        await broadcast_dashboard_update("status_update", {
+            "status": championship_manager.status,
+            "message": "Championship has finished!",
+            "leaderboard": championship_manager.get_leaderboard()
+        })
+        return
+    
+    championship_manager.current_round = round_number
+    logger.info(f"Starting round {round_number + 1}/{len(championship_manager.rounds)}")
+    
+    # Broadcast round start
+    await broadcast_dashboard_update("round_start", {
+        "round_number": round_number + 1,
+        "total_rounds": len(championship_manager.rounds),
+        "message": f"Round {round_number + 1} is starting!"
+    })
+    
+    # Start all matches in this round concurrently
+    tasks = []
+    for match_id in championship_manager.rounds[round_number]:
+        task = asyncio.create_task(execute_match(match_id))
+        tasks.append(task)
+    
+    # Wait for all matches to complete
+    await asyncio.gather(*tasks)
+    
+    # Check spectator count to determine delay before next round
+    spectator_count = championship_manager.get_current_round_spectator_count()
+    delay = 15 if spectator_count >= 1 else 5
+    
+    logger.info(f"Round {round_number + 1} completed. Waiting {delay} seconds before starting next round...")
+    await broadcast_dashboard_update("round_complete", {
+        "round_number": round_number + 1,
+        "message": f"Round {round_number + 1} completed. Next round starts in {delay} seconds."
+    })
+    
+    # Wait before starting next round
+    await asyncio.sleep(delay)
+    
+    # Start next round
+    await start_round(round_number + 1)
+
+async def execute_match(match_id: str):
+    """Execute a single match between two teams."""
+    match = championship_manager.get_match_by_id(match_id)
+    if not match:
+        logger.error(f"Match {match_id} not found")
+        return
+    
+    match.status = "in_progress"
+    match.start_time = datetime.now()
+    
+    # Initialize games in this match
+    match.games = [
+        Game(1, "team_a"),  # Game 1: Team A starts
+        Game(2, "team_b"),  # Game 2: Team B starts
+        Game(3, "team_a"),  # Game 3: Team A starts
+        Game(4, "team_b")   # Game 4: Team B starts
+    ]
+    
+    # Validate both endpoints before match
+    team_a_endpoint = championship_manager.get_team_endpoint(match.team_a)
+    team_b_endpoint = championship_manager.get_team_endpoint(match.team_b)
+    
+    team_a_valid = await validate_endpoint(team_a_endpoint)
+    team_b_valid = await validate_endpoint(team_b_endpoint)
+    
+    if not team_a_valid or not team_b_valid:
+        logger.warning(f"Match {match_id}: One or both endpoints failed validation")
+    
+    # Broadcast match start
+    await broadcast_dashboard_update("match_update", {
+        "match_id": match_id,
+        "status": "in_progress",
+        "team_a": match.team_a,
+        "team_b": match.team_b,
+        "round": match.round_number + 1
+    })
+    
+    # Set match start time for timeout tracking
+    match_start_time = time.time()
+    match_timeout = 300  # 5 minutes (300 seconds)
+    
+    # Play all 4 games
+    for game_idx, game in enumerate(match.games):
+        match.current_game = game_idx
+        game.status = "in_progress"
+        
+        # Check if we've exceeded match timeout
+        if time.time() - match_start_time > match_timeout:
+            logger.warning(f"Match {match_id} exceeded time limit. Declaring draw.")
+            match.winner = "draw"
+            break
+        
+        # Play the game
+        game_result = await play_game(match_id, game, team_a_endpoint, team_b_endpoint)
+        
+        # Update game result
+        game.winner = game_result["winner"]
+        game.status = "finished"
+        
+        # Update match points
+        if game.winner == "team_a":
+            match.team_a_points += 1
+        elif game.winner == "team_b":
+            match.team_b_points += 1
+        elif game.winner == "draw":
+            match.team_a_points += 0.5
+            match.team_b_points += 0.5
+        
+        # Broadcast game result
+        await broadcast_battle_update(match_id, {
+            "type": "game_complete",
+            "game_number": game.game_number,
+            "winner": game.winner,
+            "team_a_points": match.team_a_points,
+            "team_b_points": match.team_b_points
+        })
+    
+    # Determine match winner
+    match.status = "finished"
+    match.end_time = datetime.now()
+    
+    if match.team_a_points > match.team_b_points:
+        match.winner = "team_a"
+    elif match.team_b_points > match.team_a_points:
+        match.winner = "team_b"
+    else:
+        match.winner = "draw"
+    
+    # Update leaderboard
+    championship_manager.update_leaderboard(match_id)
+    
+    # Broadcast match result
+    await broadcast_dashboard_update("match_update", {
+        "match_id": match_id,
+        "status": "finished",
+        "winner": match.winner,
+        "team_a_points": match.team_a_points,
+        "team_b_points": match.team_b_points
+    })
+    
+    # Broadcast updated leaderboard
+    await broadcast_dashboard_update("leaderboard_update", {
+        "leaderboard": championship_manager.get_leaderboard()
+    })
+    
+    logger.info(f"Match {match_id} completed: {match.team_a} vs {match.team_b}, Winner: {match.winner}")
+
+async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endpoint: str) -> Dict:
+    """Play a single game between two teams."""
+    match = championship_manager.get_match_by_id(match_id)
+    if not match:
+        logger.error(f"Match {match_id} not found")
+        return {"winner": "draw"}
+    
+    # Create a new game instance
+    connect4_game = Connect4Game()
+    game.game_state = connect4_game.get_state()
+    
+    # Determine which team plays as which player based on first_player
+    player1_team = "team_a" if game.first_player == "team_a" else "team_b"
+    player2_team = "team_b" if game.first_player == "team_a" else "team_a"
+    
+    player1_endpoint = team_a_endpoint if player1_team == "team_a" else team_b_endpoint
+    player2_endpoint = team_b_endpoint if player2_team == "team_b" else team_a_endpoint
+    
+    # Broadcast game start
+    await broadcast_battle_update(match_id, {
+        "type": "game_start",
+        "game_number": game.game_number,
+        "first_player": game.first_player,
+        "team_a_color": "red" if player1_team == "team_a" else "yellow",
+        "team_b_color": "red" if player1_team == "team_b" else "yellow",
+        "state": connect4_game.get_state()
+    })
+    
+    # Play the game until completion or timeout
+    move_count = 0
+    max_moves = 42  # Maximum possible moves in a 6x7 board
+    
+    while not connect4_game.game_over and move_count < max_moves:
+        # Get current player's endpoint
+        current_team = player1_team if connect4_game.current_player == 1 else player2_team
+        endpoint = player1_endpoint if connect4_game.current_player == 1 else player2_endpoint
+        
+        # Prepare game state for AI
+        game_state = {
+            "board": connect4_game.get_state()["board"],
+            "current_player": connect4_game.current_player,
+            "valid_moves": connect4_game.get_valid_moves()
+        }
+        
+        # Broadcast current state
+        await broadcast_battle_update(match_id, {
+            "type": "game_update",
+            "game_number": game.game_number,
+            "current_player": current_team,
+            "state": connect4_game.get_state(),
+            "move_count": move_count
+        })
+        
+        # Get move from the AI with timeout
+        column = await get_ai_move_with_timeout(endpoint, game_state, 5.0)
+        
+        # If the AI didn't provide a valid move, use fallback
+        if column is None or column not in connect4_game.get_valid_moves():
+            valid_moves = connect4_game.get_valid_moves()
+            column = valid_moves[0] if valid_moves else None
+            logger.warning(f"Using fallback move for {current_team}: {column}")
+        
+        # Make the move
+        if column is not None:
+            connect4_game.make_move(column)
+            move_count += 1
+            
+            # Broadcast move
+            await broadcast_battle_update(match_id, {
+                "type": "move_made",
+                "game_number": game.game_number,
+                "column": column,
+                "team": current_team,
+                "state": connect4_game.get_state()
+            })
+        else:
+            # No valid moves available, game is a draw
+            logger.warning(f"No valid moves available for {current_team}")
+            break
+    
+    # Determine winner
+    if connect4_game.winner == 1:
+        winner = player1_team
+    elif connect4_game.winner == 2:
+        winner = player2_team
+    else:
+        winner = "draw"
+    
+    return {"winner": winner, "moves": move_count}
+
+async def get_ai_move_with_timeout(endpoint: str, game_state: Dict, timeout: float) -> Optional[int]:
+    """Get a move from an AI endpoint with a timeout."""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(endpoint, json=game_state, timeout=timeout)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("move")
+    except Exception as e:
+        logger.error(f"Error getting AI move: {str(e)}")
+    
+    return None
+
+async def validate_endpoint(endpoint: str) -> bool:
+    """Validate if an endpoint is responsive and returns valid moves."""
+    if not endpoint:
+        return False
+    
+    test_game_state = {
+        "board": [[0]*7 for _ in range(6)],
+        "current_player": 1,
+        "valid_moves": [0,1,2,3,4,5,6]
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(endpoint, json=test_game_state, timeout=5.0)
+            
+            if response.status_code != 200:
+                return False
+            
+            data = response.json()
+            if "move" not in data or not isinstance(data["move"], int) or data["move"] not in test_game_state["valid_moves"]:
+                return False
+            
+            return True
+    except Exception as e:
+        logger.error(f"Error validating endpoint {endpoint}: {e}")
+        return False
+
+# WebSocket broadcast functions
+async def broadcast_dashboard_update(update_type: str, data: Dict):
+    """Broadcast updates to all dashboard WebSocket connections."""
+    message = {"type": update_type, **data}
+    
+    if "/ws/championship/dashboard" in connections:
+        for websocket in connections["/ws/championship/dashboard"]:
+            await websocket.send_json(message)
+
+async def broadcast_battle_update(match_id: str, data: Dict):
+    """Broadcast updates to all WebSocket connections for a specific battle."""
+    channel = f"/ws/battle/{match_id}"
+    
+    if channel in connections:
+        for websocket in connections[channel]:
+            await websocket.send_json(data)
+
+# Championship Dashboard WebSocket
+@app.websocket("/ws/championship/dashboard")
+async def websocket_championship_dashboard(websocket: WebSocket):
+    """WebSocket endpoint for championship dashboard."""
+    await websocket.accept()
+    
+    # Add connection
+    if "/ws/championship/dashboard" not in connections:
+        connections["/ws/championship/dashboard"] = []
+    connections["/ws/championship/dashboard"].append(websocket)
+    
+    # Send initial state
+    team_count = len(championship_manager.teams)
+    await websocket.send_json({
+        "type": "initial_state",
+        "status": championship_manager.status,
+        "team_count": team_count,
+        "current_round": championship_manager.current_round + 1 if championship_manager.rounds else 0,
+        "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0,
+        "leaderboard": championship_manager.get_leaderboard(),
+        "schedule": await get_championship_schedule()
+    })
+    
+    try:
+        # Keep connection alive
+        while True:
+            data = await websocket.receive_json()
+            logger.info(f"Received dashboard message: {data}")
+            # Just acknowledge receipt - no specific actions needed yet
+            await websocket.send_json({"type": "ack", "received": True})
+    
+    except WebSocketDisconnect:
+        # Remove connection on disconnect
+        if "/ws/championship/dashboard" in connections and websocket in connections["/ws/championship/dashboard"]:
+            connections["/ws/championship/dashboard"].remove(websocket)
+    except Exception as e:
+        logger.error(f"Error in championship dashboard websocket: {e}")
+
+# Utility function to load team data from Redis
+async def load_teams_from_redis():
+    """
+    Load registered teams from storage.
+    Retrieves all team data from Redis or in-memory storage.
+    """
+    try:
+        team_keys = await storage.keys("team:*")
+        logger.info(f"Found {len(team_keys)} teams in storage")
+        
+        for key in team_keys:
+            team_data = await storage.hgetall(key)
+            if not team_data:
+                continue
+                
+            team_id = key.decode('utf-8').split(':')[1] if isinstance(key, bytes) else key.split(':')[1]
+            
+            # Convert byte strings to Python strings
+            team = {}
+            for field, value in team_data.items():
+                field_name = field.decode('utf-8') if isinstance(field, bytes) else field
+                field_value = value.decode('utf-8') if isinstance(value, bytes) else value
+                team[field_name] = field_value
+            
+            # Register team in memory
+            championship_manager.add_team(team_id, team.get("api_endpoint"))
+            logger.info(f"Loaded team: {team.get('name', team_id)}")
+            
+        logger.info(f"Successfully loaded {len(championship_manager.teams)} teams from storage")
+        return True
+    except Exception as e:
+        logger.error(f"Error loading teams from storage: {e}")
+        return False
+
+# App startup event to initialize Redis and load teams
+@app.on_event("startup")
+async def startup_event():
+    """
+    Called on application startup.
+    Initialize the Redis connection and load any existing registered teams.
+    """
+    global redis_pool
+    
+    # Initialize Redis connection with retries
+    redis_connected = await init_redis_pool()
+    
+    if redis_connected:
+        logger.info("Successfully connected to Redis server")
+        # Clear Redis cache on startup
+        try:
+            redis_conn = await get_redis_connection()
+            if redis_conn:
+                keys = await redis_conn.keys("*")
+                if keys:
+                    logger.info(f"Clearing {len(keys)} keys from Redis cache on startup")
+                    await redis_conn.delete(*keys)
+        except Exception as e:
+            logger.error(f"Error clearing Redis cache on startup: {e}")
+    else:
+        logger.warning("Using in-memory storage fallback (Redis connection failed)")
+    
+    # Initialize game state
+    await load_teams_from_redis()
+    
+    logger.info("Server startup complete")
+
+# API endpoint to manually clear Redis cache
+@app.post("/api/clear-cache")
+async def clear_cache_endpoint():
+    """Manually clear all Redis cache and reset championship data"""
+    global championship_manager
+    
+    try:
+        # 1. Xóa cache Redis
+        redis_conn = await get_redis_connection()
+        if redis_conn is None:
+            raise HTTPException(status_code=500, detail="Redis connection not available")
+            
+        # Lấy tất cả keys và xóa chúng
+        keys = await redis_conn.keys("*")
+        if keys:
+            logger.info(f"Manually clearing {len(keys)} keys from Redis cache")
+            await redis_conn.delete(*keys)
+        
+        # 2. Reset championship_manager về trạng thái ban đầu
+        championship_manager = ChampionshipManager()
+        logger.info("Championship manager đã được reset")
+        
+        # 3. Xóa toàn bộ dữ liệu từ memory store
+        try:
+            await storage.clear_all()
+            logger.info("Memory storage đã được xóa")
+        except Exception as e:
+            logger.error(f"Lỗi khi xóa memory storage: {e}")
+        
+        # 4. Khởi tạo lại storage
+        await storage.initialize(redis_conn if redis_conn else None)
+        logger.info("Storage đã được khởi tạo lại")
+            
+        return {
+            "success": True, 
+            "message": f"Đã xóa thành công {len(keys) if keys else 0} keys từ Redis cache và reset hệ thống"
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khi xóa Redis cache: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi xóa Redis cache: {str(e)}")
+
+# Thêm endpoint mới sau phần các API championship
+@app.post("/api/championship/start")
+async def start_championship_manually(background_tasks: BackgroundTasks):
+    """Manually start the championship"""
+    # Kiểm tra số lượng đội
+    team_count = len(championship_manager.teams)
+    
+    if team_count < 2:
+        raise HTTPException(status_code=400, detail="Cần ít nhất 2 đội để bắt đầu giải đấu")
+    
+    if championship_manager.status != "waiting":
+        raise HTTPException(status_code=400, detail="Giải đấu đã bắt đầu hoặc đã kết thúc")
+    
+    # Tạo lịch thi đấu
+    logger.info("Đang tạo lịch thi đấu cho giải...")
+    championship_manager.generate_schedule()
+    
+    # Cập nhật trạng thái
+    championship_manager.status = "in_progress"
+    
+    # Broadcast trạng thái
+    await broadcast_dashboard_update("status_update", {
+        "status": championship_manager.status,
+        "message": "Giải đấu đã bắt đầu!",
+        "schedule": await get_championship_schedule()
+    })
+    
+    # Bắt đầu vòng đầu tiên trong background
+    background_tasks.add_task(start_round, 0)
+    
+    return {
+        "success": True,
+        "message": f"Giải đấu bắt đầu với {team_count} đội",
+        "team_count": team_count
+    }
 

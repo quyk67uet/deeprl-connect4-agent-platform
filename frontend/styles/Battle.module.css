@@ -340,4 +340,163 @@
   .battleControlsContainer {
     width: 100%;
   }
+}
+
+/* Championship-specific styles */
+.championshipInfo {
+  background-color: #0f172a;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid #2e3a50;
+}
+
+.matchDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.matchDetails h2 {
+  color: #e879f9;
+  margin: 0;
+  text-align: center;
+}
+
+.round {
+  background-color: #9c27b0;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  text-align: center;
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.teamsScore {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin: 10px 0;
+}
+
+.teamInfo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.teamName {
+  font-weight: 500;
+  font-size: 1.1rem;
+}
+
+.redTeam {
+  color: #ef4444;
+  font-weight: bold;
+}
+
+.yellowTeam {
+  color: #f59e0b;
+  font-weight: bold;
+}
+
+.teamPoints {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #e879f9;
+}
+
+.scoreSeparator {
+  font-size: 1.2rem;
+  color: #94a3b8;
+}
+
+.gameInfo {
+  text-align: center;
+  color: #94a3b8;
+}
+
+.gameNumber {
+  font-weight: bold;
+  color: #e879f9;
+  margin-bottom: 5px;
+}
+
+.firstPlayer {
+  font-size: 0.9rem;
+}
+
+.colorInfo {
+  font-size: 0.8rem;
+  color: #64748b;
+  display: block;
+  margin-top: 5px;
+}
+
+.championshipControls {
+  padding: 20px;
+  background-color: #0f172a;
+  border-radius: 10px;
+  border: 1px solid #2e3a50;
+}
+
+.championshipControls h3 {
+  color: #e879f9;
+  margin-top: 0;
+  text-align: center;
+}
+
+.matchSummary {
+  line-height: 1.6;
+  margin-bottom: 20px;
+}
+
+.matchSummary p {
+  margin: 0 0 10px 0;
+}
+
+.matchResult {
+  background-color: rgba(156, 39, 176, 0.1);
+  padding: 15px;
+  border-radius: 8px;
+  margin-top: 15px;
+}
+
+.matchResult h4 {
+  color: #e879f9;
+  margin: 0 0 10px 0;
+  text-align: center;
+}
+
+.finalScore {
+  font-size: 1.2rem;
+  text-align: center;
+  font-weight: bold;
+}
+
+.winner {
+  text-align: center;
+  color: #10b981;
+  font-weight: 500;
+}
+
+.championshipActions {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.dashboardLink {
+  background-color: #9c27b0;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 500;
+  transition: background-color 0.3s;
+  text-align: center;
 } 

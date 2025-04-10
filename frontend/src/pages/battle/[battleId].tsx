@@ -62,6 +62,38 @@ const BattlePage: React.FC = () => {
   // Spectator count
   const [spectatorCount, setSpectatorCount] = useState<number>(1);
   
+  // Championship match state
+  const [isChampionshipMatch, setIsChampionshipMatch] = useState<boolean>(false);
+  const [championshipData, setChampionshipData] = useState<{
+    teamA: string;
+    teamB: string;
+    status: string;
+    round: number;
+    currentGame: number;
+    teamAPoints: number;
+    teamBPoints: number;
+  }>({
+    teamA: '',
+    teamB: '',
+    status: '',
+    round: 0,
+    currentGame: 0,
+    teamAPoints: 0,
+    teamBPoints: 0
+  });
+  const [championshipGameData, setChampionshipGameData] = useState<{
+    gameNumber: number;
+    firstPlayer: string;
+    status: string;
+    teamAColor?: string;
+    teamBColor?: string;
+    currentTeam?: number;
+  }>({
+    gameNumber: 0,
+    firstPlayer: '',
+    status: ''
+  });
+
   // Connect to WebSocket
   useEffect(() => {
     if (!battleId) return;
@@ -121,6 +153,54 @@ const BattlePage: React.FC = () => {
             const data = JSON.parse(event.data);
             console.log('Received battle data:', data);
             
+            // Handle championship match info
+            if (data.type === 'championship_match_info') {
+              // This is a championship match
+              setIsChampionshipMatch(true);
+              setChampionshipData({
+                teamA: data.team_a,
+                teamB: data.team_b,
+                status: data.status,
+                round: data.round,
+                currentGame: data.current_game,
+                teamAPoints: data.team_a_points,
+                teamBPoints: data.team_b_points
+              });
+              
+              // Update spectator count
+              setSpectatorCount(data.spectator_count);
+              
+              return;
+            }
+            
+            // Handle game info for championship matches
+            if (data.type === 'game_info') {
+              setChampionshipGameData({
+                gameNumber: data.game_number,
+                firstPlayer: data.first_player,
+                status: data.status
+              });
+              
+              if (data.state) {
+                // Convert state format
+                const gameState = {
+                  board: data.state.board,
+                  currentPlayer: data.state.current_player,
+                  winner: data.state.winner,
+                  draw: data.state.game_over && !data.state.winner
+                };
+                
+                // Update battle state
+                setBattleState(prev => ({
+                  ...prev,
+                  gameState
+                }));
+              }
+              
+              return;
+            }
+            
+            // Handle regular battle updates
             if (data.type === 'battle_state' || data.type === 'battle_update' || data.type === 'battle_complete') {
               // Convert state format
               const gameState = {
@@ -163,12 +243,105 @@ const BattlePage: React.FC = () => {
                 }
               }
             }
-            else if (data.type === 'player_joined') {
-              toast.info(`Someone joined to watch the battle`);
+            // Handle championship match updates
+            else if (data.type === 'game_start') {
+              // Update championship game data
+              setChampionshipGameData({
+                gameNumber: data.game_number,
+                firstPlayer: data.first_player,
+                status: 'in_progress',
+                teamAColor: data.team_a_color,
+                teamBColor: data.team_b_color
+              });
+              
+              // Update game state
+              if (data.state) {
+                const gameState = {
+                  board: data.state.board,
+                  currentPlayer: data.state.current_player,
+                  winner: data.state.winner,
+                  draw: data.state.game_over && !data.state.winner
+                };
+                
+                setBattleState(prev => ({
+                  ...prev,
+                  gameState
+                }));
+              }
+              
+              toast.info(`Game ${data.game_number} starting - ${data.first_player === 'team_a' ? championshipData.teamA : championshipData.teamB} goes first`);
+            }
+            else if (data.type === 'game_update') {
+              // Update game state
+              if (data.state) {
+                const gameState = {
+                  board: data.state.board,
+                  currentPlayer: data.state.current_player,
+                  winner: data.state.winner,
+                  draw: data.state.game_over && !data.state.winner
+                };
+                
+                setBattleState(prev => ({
+                  ...prev,
+                  gameState
+                }));
+              }
+              
+              // Update championship game turn info
+              setChampionshipGameData(prev => ({
+                ...prev,
+                currentTeam: data.current_player
+              }));
+            }
+            else if (data.type === 'move_made') {
+              // A move was made in a championship game
+              if (data.state) {
+                const gameState = {
+                  board: data.state.board,
+                  currentPlayer: data.state.current_player,
+                  winner: data.state.winner,
+                  draw: data.state.game_over && !data.state.winner
+                };
+                
+                setBattleState(prev => ({
+                  ...prev,
+                  gameState
+                }));
+              }
+              
+              const teamName = data.team === 'team_a' ? championshipData.teamA : championshipData.teamB;
+              toast.info(`${teamName} played in column ${data.column + 1}`);
+            }
+            else if (data.type === 'game_complete') {
+              // A game in the championship match finished
+              setChampionshipData(prev => ({
+                ...prev,
+                teamAPoints: data.team_a_points,
+                teamBPoints: data.team_b_points
+              }));
+              
+              setChampionshipGameData(prev => ({
+                ...prev,
+                status: 'finished'
+              }));
+              
+              // Show winner notification
+              if (data.winner === 'team_a') {
+                toast.success(`${championshipData.teamA} wins Game ${data.game_number}!`);
+              } else if (data.winner === 'team_b') {
+                toast.success(`${championshipData.teamB} wins Game ${data.game_number}!`);
+              } else {
+                toast.info(`Game ${data.game_number} ended in a draw!`);
+              }
             }
             else if (data.type === 'spectator_count') {
+              // Update spectator count
               setSpectatorCount(data.count);
               toast.info(`${data.count} spectators are watching this battle`);
+            }
+            else if (data.type === 'player_joined') {
+              // Display notification when a new spectator joins
+              toast.info(`Someone joined to watch the battle`);
             }
             else if (data.type === 'player_left') {
               toast.info(`Someone left the battle`);
@@ -342,6 +515,29 @@ const BattlePage: React.FC = () => {
     return 'Unknown state';
   };
   
+  // Get championship status message
+  const getChampionshipStatusMessage = () => {
+    if (championshipData.status === 'waiting') {
+      return 'Waiting for match to start';
+    } else if (championshipData.status === 'in_progress') {
+      return `Game ${championshipGameData.gameNumber}/4: ` + 
+        (championshipGameData.status === 'in_progress' 
+          ? `${championshipGameData.currentTeam === 1 ? championshipData.teamA : championshipData.teamB}'s turn` 
+          : 'Preparing next game');
+    } else if (championshipData.status === 'finished') {
+      let winner = '';
+      if (championshipData.teamAPoints > championshipData.teamBPoints) {
+        winner = championshipData.teamA;
+      } else if (championshipData.teamBPoints > championshipData.teamAPoints) {
+        winner = championshipData.teamB;
+      } else {
+        winner = 'Draw';
+      }
+      return `Match finished - ${winner}`;
+    }
+    return 'Unknown state';
+  };
+  
   // Loading state
   if (!battleId) {
     return <div className={styles.loading}>Loading...</div>;
@@ -355,7 +551,9 @@ const BattlePage: React.FC = () => {
       
       <div className={styles.battleContainer}>
         <div className={styles.status}>
-          <div className={styles.statusText}>{getStatusMessage()}</div>
+          <div className={styles.statusText}>
+            {isChampionshipMatch ? getChampionshipStatusMessage() : getStatusMessage()}
+          </div>
           <div className={`${styles.connectionStatus} ${!connected ? styles.disconnected : ''}`}>
             {connected ? 'Connected' : 'Disconnected'}
             {connected && <span className={styles.viewerCount}>{spectatorCount} watching</span>}
@@ -363,6 +561,54 @@ const BattlePage: React.FC = () => {
         </div>
         
         <div className={styles.battleContent}>
+          {/* Championship match info header, only shown for championship matches */}
+          {isChampionshipMatch && (
+            <div className={styles.championshipInfo}>
+              <div className={styles.matchDetails}>
+                <h2>Championship Match</h2>
+                <div className={styles.round}>Round {championshipData.round}</div>
+                
+                <div className={styles.teamsScore}>
+                  <div className={styles.teamInfo}>
+                    <div className={styles.teamName}>
+                      <span className={styles.redTeam}>{championshipData.teamA}</span>
+                    </div>
+                    <div className={styles.teamPoints}>{championshipData.teamAPoints}</div>
+                  </div>
+                  
+                  <div className={styles.scoreSeparator}>vs</div>
+                  
+                  <div className={styles.teamInfo}>
+                    <div className={styles.teamName}>
+                      <span className={styles.yellowTeam}>{championshipData.teamB}</span>
+                    </div>
+                    <div className={styles.teamPoints}>{championshipData.teamBPoints}</div>
+                  </div>
+                </div>
+                
+                <div className={styles.gameInfo}>
+                  {championshipGameData.gameNumber > 0 && (
+                    <>
+                      <div className={styles.gameNumber}>
+                        Game {championshipGameData.gameNumber}/4
+                      </div>
+                      <div className={styles.firstPlayer}>
+                        {championshipGameData.firstPlayer === 'team_a' 
+                          ? championshipData.teamA 
+                          : championshipData.teamB} goes first
+                        {championshipGameData.teamAColor && (
+                          <span className={styles.colorInfo}>
+                            ({championshipData.teamA}: {championshipGameData.teamAColor}, 
+                            {championshipData.teamB}: {championshipGameData.teamBColor})
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           <div className={styles.gameBoard}>
             <Board
               board={battleState.gameState.board}
@@ -374,95 +620,136 @@ const BattlePage: React.FC = () => {
           </div>
           
           <div className={styles.battleControlsContainer}>
-            <div className={styles.aiSetup}>
-              <h3>Configure AI Battle</h3>
-              
-              <div className={styles.aiConfig}>
-                <div className={styles.formGroup}>
-                  <label htmlFor="ai1">Red AI Endpoint (Optional):</label>
-                  <input
-                    id="ai1"
-                    type="text"
-                    value={ai1Input}
-                    onChange={(e) => setAi1Input(e.target.value)}
-                    placeholder="https://your-ai-endpoint.com/move"
-                    className={styles.input}
-                    disabled={battleState.status === 'in_progress'}
-                  />
+            {!isChampionshipMatch ? (
+              /* Regular AI battle controls */
+              <div className={styles.aiSetup}>
+                <h3>Configure AI Battle</h3>
+                
+                <div className={styles.aiConfig}>
+                  <div className={styles.formGroup}>
+                    <label htmlFor="ai1">Red AI Endpoint (Optional):</label>
+                    <input
+                      id="ai1"
+                      type="text"
+                      value={ai1Input}
+                      onChange={(e) => setAi1Input(e.target.value)}
+                      placeholder="https://your-ai-endpoint.com/move"
+                      className={styles.input}
+                      disabled={battleState.status === 'in_progress'}
+                    />
+                  </div>
+                  
+                  <div className={styles.formGroup}>
+                    <label htmlFor="ai2">Yellow AI Endpoint (Optional):</label>
+                    <input
+                      id="ai2"
+                      type="text"
+                      value={ai2Input}
+                      onChange={(e) => setAi2Input(e.target.value)}
+                      placeholder="https://your-ai-endpoint.com/move"
+                      className={styles.input}
+                      disabled={battleState.status === 'in_progress'}
+                    />
+                  </div>
+                  
+                  <div className={styles.formGroup}>
+                    <label htmlFor="maxTurns">Max Turns:</label>
+                    <input
+                      id="maxTurns"
+                      type="number"
+                      min="10"
+                      max="100"
+                      value={maxTurns}
+                      onChange={(e) => setMaxTurns(parseInt(e.target.value) || 50)}
+                      className={styles.input}
+                      disabled={battleState.status === 'in_progress'}
+                    />
+                  </div>
+                  
+                  <div className={styles.aiNote}>
+                    <p>
+                      <strong>Note:</strong> If no AI endpoint is provided, the default server AI will be used.
+                      Your AI endpoint should accept POST requests with:
+                    </p>
+                    <div className={styles.jsonDisplay}>
+                      <span className={styles.jsonSymbol}>{"{"}</span>
+                      <br />
+                      <span className={styles.jsonKey}>"board"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>[[0,0,0,...], [...], ...]</span>,
+                      <br />
+                      <span className={styles.jsonKey}>"current_player"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>1|2</span>,
+                      <br />
+                      <span className={styles.jsonKey}>"valid_moves"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>[0,1,2,...]</span>
+                      <br />
+                      <span className={styles.jsonSymbol}>{"}"}</span>
+                    </div>
+                    <p>and return:</p>
+                    <div className={styles.jsonDisplay}>
+                      <span className={styles.jsonSymbol}>{"{"}</span>
+                      <br />
+                      <span className={styles.jsonKey}>"move"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>columnIndex</span>
+                      <br />
+                      <span className={styles.jsonSymbol}>{"}"}</span>
+                    </div>
+                  </div>
                 </div>
                 
-                <div className={styles.formGroup}>
-                  <label htmlFor="ai2">Yellow AI Endpoint (Optional):</label>
-                  <input
-                    id="ai2"
-                    type="text"
-                    value={ai2Input}
-                    onChange={(e) => setAi2Input(e.target.value)}
-                    placeholder="https://your-ai-endpoint.com/move"
-                    className={styles.input}
-                    disabled={battleState.status === 'in_progress'}
-                  />
+                <div className={styles.battleActions}>
+                  <button
+                    className={`${styles.button} ${styles.startButton}`}
+                    onClick={startBattle}
+                    disabled={!connected || battleState.status === 'in_progress'}
+                  >
+                    {battleState.status === 'waiting' ? 'Start Battle' : 'Restart Battle'}
+                  </button>
+                  
+                  <button
+                    className={styles.button}
+                    onClick={resetBattle}
+                    disabled={!connected || battleState.status === 'waiting'}
+                  >
+                    Reset Board
+                  </button>
                 </div>
+              </div>
+            ) : (
+              /* Championship match controls */
+              <div className={styles.championshipControls}>
+                <h3>Championship Match</h3>
                 
-                <div className={styles.formGroup}>
-                  <label htmlFor="maxTurns">Max Turns:</label>
-                  <input
-                    id="maxTurns"
-                    type="number"
-                    min="10"
-                    max="100"
-                    value={maxTurns}
-                    onChange={(e) => setMaxTurns(parseInt(e.target.value) || 50)}
-                    className={styles.input}
-                    disabled={battleState.status === 'in_progress'}
-                  />
-                </div>
-                
-                <div className={styles.aiNote}>
+                <div className={styles.matchSummary}>
                   <p>
-                    <strong>Note:</strong> If no AI endpoint is provided, the default server AI will be used.
-                    Your AI endpoint should accept POST requests with:
+                    You are watching a championship match between <strong>{championshipData.teamA}</strong> and <strong>{championshipData.teamB}</strong>.
                   </p>
-                  <div className={styles.jsonDisplay}>
-                    <span className={styles.jsonSymbol}>{"{"}</span>
-                    <br />
-                    <span className={styles.jsonKey}>"board"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>[[0,0,0,...], [...], ...]</span>,
-                    <br />
-                    <span className={styles.jsonKey}>"current_player"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>1|2</span>,
-                    <br />
-                    <span className={styles.jsonKey}>"valid_moves"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>[0,1,2,...]</span>
-                    <br />
-                    <span className={styles.jsonSymbol}>{"}"}</span>
-                  </div>
-                  <p>and return:</p>
-                  <div className={styles.jsonDisplay}>
-                    <span className={styles.jsonSymbol}>{"{"}</span>
-                    <br />
-                    <span className={styles.jsonKey}>"move"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>columnIndex</span>
-                    <br />
-                    <span className={styles.jsonSymbol}>{"}"}</span>
-                  </div>
+                  
+                  <p>
+                    This match consists of 4 games with alternating first player. 
+                    Each game win is worth 1 point, a draw is 0.5 points.
+                  </p>
+                  
+                  {championshipData.status === 'finished' && (
+                    <div className={styles.matchResult}>
+                      <h4>Match Result</h4>
+                      <p className={styles.finalScore}>
+                        {championshipData.teamA}: {championshipData.teamAPoints} - {championshipData.teamB}: {championshipData.teamBPoints}
+                      </p>
+                      <p className={styles.winner}>
+                        {championshipData.teamAPoints > championshipData.teamBPoints 
+                          ? `${championshipData.teamA} wins the match!` 
+                          : championshipData.teamBPoints > championshipData.teamAPoints 
+                            ? `${championshipData.teamB} wins the match!`
+                            : 'The match ended in a draw!'}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                
+                <div className={styles.championshipActions}>
+                  <Link href="/championship/dashboard" className={styles.dashboardLink}>
+                    Return to Dashboard
+                  </Link>
                 </div>
               </div>
-              
-              <div className={styles.battleActions}>
-                <button
-                  className={`${styles.button} ${styles.startButton}`}
-                  onClick={startBattle}
-                  disabled={!connected || battleState.status === 'in_progress'}
-                >
-                  {battleState.status === 'waiting' ? 'Start Battle' : 'Restart Battle'}
-                </button>
-                
-                <button
-                  className={styles.button}
-                  onClick={resetBattle}
-                  disabled={!connected || battleState.status === 'waiting'}
-                >
-                  Reset Board
-                </button>
-              </div>
-            </div>
+            )}
             
             <div className={styles.battleInfo}>
               <div className={styles.infoItem}>
@@ -477,12 +764,18 @@ const BattlePage: React.FC = () => {
               
               <div className={styles.infoItem}>
                 <span>Status:</span>
-                <span className={styles.statusValue}>{battleState.status}</span>
+                <span className={styles.statusValue}>
+                  {isChampionshipMatch ? championshipData.status : battleState.status}
+                </span>
               </div>
               
               <div className={styles.infoItem}>
-                <span>Turn:</span>
-                <span>{battleState.currentTurn}</span>
+                <span>{isChampionshipMatch ? 'Game:' : 'Turn:'}</span>
+                <span>
+                  {isChampionshipMatch 
+                    ? `${championshipGameData.gameNumber}/4` 
+                    : battleState.currentTurn}
+                </span>
               </div>
             </div>
             
