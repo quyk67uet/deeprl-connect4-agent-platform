@@ -206,6 +206,20 @@
   box-shadow: 0 5px 10px rgba(0, 0, 0, 0.3);
 }
 
+.cell.lastMove {
+  box-shadow: 0 0 8px 3px rgba(255, 255, 255, 0.5);
+  animation: pulse 1.5s infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    box-shadow: 0 0 8px 3px rgba(255, 255, 255, 0.5);
+  }
+  to {
+    box-shadow: 0 0 12px 6px rgba(255, 255, 255, 0.7);
+  }
+}
+
 .piece {
   width: 80%;
   height: 80%;

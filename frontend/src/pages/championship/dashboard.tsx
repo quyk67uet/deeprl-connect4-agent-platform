@@ -412,7 +412,7 @@ const ChampionshipDashboard: React.FC = () => {
                             
                             <div className={styles.matchActions}>
                               {(match.status === 'in_progress' || match.status === 'scheduled') && (
-                                <Link href={`/battle/${match.match_id}`} className={styles.viewButton}>
+                                <Link href={`/championship/battle/${match.match_id}`} className={styles.viewButton}>
                                   View Play
                                 </Link>
                               )}

@@ -1611,10 +1611,15 @@ async def broadcast_dashboard_update(update_type: str, data: Dict):
 
 async def broadcast_battle_update(match_id: str, data: Dict):
     """Broadcast updates to all WebSocket connections for a specific battle."""
-    channel = f"/ws/battle/{match_id}"
+    # Gửi cho endpoint thường (/ws/battle/{match_id})
+    if match_id in connections:
+        for websocket in connections[match_id]:
+            await websocket.send_json(data)
     
-    if channel in connections:
-        for websocket in connections[channel]:
+    # Gửi cho endpoint championship (/ws/championship/battle/{match_id})
+    championship_channel = f"championship_battle:{match_id}"
+    if championship_channel in connections:
+        for websocket in connections[championship_channel]:
             await websocket.send_json(data)
 
 # Championship Dashboard WebSocket
@@ -1797,4 +1802,91 @@ async def start_championship_manually(background_tasks: BackgroundTasks):
         "message": f"Giải đấu bắt đầu với {team_count} đội",
         "team_count": team_count
     }
+
+@app.websocket("/ws/championship/battle/{match_id}")
+async def websocket_championship_battle(websocket: WebSocket, match_id: str):
+    """WebSocket endpoint dành riêng cho xem trận đấu championship."""
+    await websocket.accept()
+    
+    # Thêm kết nối với key đặc biệt để phân biệt với kết nối battle thông thường
+    championship_channel = f"championship_battle:{match_id}"
+    if championship_channel not in connections:
+        connections[championship_channel] = []
+    connections[championship_channel].append(websocket)
+    
+    # Kiểm tra xem match_id có phải là một trận đấu championship không
+    match = championship_manager.get_match_by_id(match_id)
+    if not match:
+        # Không phải là trận đấu championship
+        await websocket.send_json({
+            "type": "error",
+            "message": "Không tìm thấy trận đấu championship này"
+        })
+        await websocket.close(code=4004)
+        return
+    
+    # Đây là trận đấu championship, cập nhật spectator count
+    match.spectator_count += 1
+    
+    # Gửi thông tin trận đấu
+    await websocket.send_json({
+        "type": "championship_match_info",
+        "team_a": match.team_a,
+        "team_b": match.team_b,
+        "status": match.status,
+        "round": match.round_number + 1,
+        "current_game": match.current_game + 1 if match.games else 0,
+        "team_a_points": match.team_a_points,
+        "team_b_points": match.team_b_points,
+        "spectator_count": match.spectator_count
+    })
+    
+    # Nếu trận đấu có game, gửi thông tin game hiện tại
+    if match.games and match.current_game < len(match.games):
+        game = match.games[match.current_game]
+        await websocket.send_json({
+            "type": "game_info",
+            "game_number": game.game_number,
+            "first_player": game.first_player,
+            "status": game.status,
+            "state": game.game_state
+        })
+    
+    # Broadcast cập nhật số người xem
+    await broadcast_battle_update(match_id, {
+        "type": "spectator_count",
+        "count": match.spectator_count
+    })
+    
+    try:
+        # Giữ kết nối mở để nhận tin nhắn
+        while True:
+            data = await websocket.receive_json()
+            logger.info(f"WebSocket message received for championship battle {match_id}: {data}")
+            # Chỉ nhận tin nhắn, không xử lý command cho người xem championship
+    
+    except WebSocketDisconnect:
+        # Xử lý ngắt kết nối
+        if championship_channel in connections and websocket in connections[championship_channel]:
+            connections[championship_channel].remove(websocket)
+            
+            # Cập nhật spectator count
+            match.spectator_count -= 1
+            
+            # Broadcast cập nhật số người xem
+            await broadcast_battle_update(match_id, {
+                "type": "spectator_count",
+                "count": match.spectator_count
+            })
+            
+            # Nếu không còn kết nối, xóa channel
+            if not connections[championship_channel]:
+                del connections[championship_channel]
+    
+    except Exception as e:
+        logger.error(f"Lỗi trong championship battle websocket cho {match_id}: {e}")
+        # Dọn dẹp kết nối trong trường hợp lỗi
+        if championship_channel in connections and websocket in connections[championship_channel]:
+            connections[championship_channel].remove(websocket)
+            match.spectator_count -= 1
 

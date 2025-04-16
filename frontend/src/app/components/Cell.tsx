@@ -5,13 +5,18 @@ interface CellProps {
   value: number;
   onClick: () => void;
   highlight: boolean;
+  isLastMove?: boolean;
 }
 
-const Cell: React.FC<CellProps> = ({ value, onClick, highlight }) => {
+const Cell: React.FC<CellProps> = ({ value, onClick, highlight, isLastMove }) => {
   let cellClassName = styles.cell;
   
   if (highlight) {
     cellClassName += ` ${styles.highlight}`;
+  }
+  
+  if (isLastMove) {
+    cellClassName += ' lastMove';
   }
   
   if (value === 1) {

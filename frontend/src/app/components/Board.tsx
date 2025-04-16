@@ -8,9 +8,10 @@ interface BoardProps {
   playerTurn: boolean;
   makeMove: (column: number) => void;
   againstAgent?: boolean;
+  lastMoveColumn?: number;
 }
 
-const Board: React.FC<BoardProps> = ({ board, currentPlayer, playerTurn, makeMove, againstAgent }) => {
+const Board: React.FC<BoardProps> = ({ board, currentPlayer, playerTurn, makeMove, againstAgent, lastMoveColumn }) => {
   const handleCellClick = (column: number) => {
     console.log("Cell clicked:", column);
     console.log("Player turn:", playerTurn);
@@ -41,6 +42,7 @@ const Board: React.FC<BoardProps> = ({ board, currentPlayer, playerTurn, makeMov
               value={cell}
               onClick={() => handleCellClick(colIndex)}
               highlight={(playerTurn || (againstAgent === true && currentPlayer === 1)) && board[0][colIndex] === 0}
+              isLastMove={lastMoveColumn !== undefined && colIndex === lastMoveColumn}
             />
           ))}
         </div>
