@@ -90,7 +90,7 @@ const ChampionshipRegistration: React.FC = () => {
             <li>Each team will play against every other team in a round-robin format.</li>
             <li>Each match consists of 4 games, alternating which team goes first.</li>
             <li>Your AI endpoint must accept POST requests with game state and return a valid move.</li>
-            <li>The championship will start automatically when 19 teams are registered.</li>
+            <li>The championship will start automatically when 20 teams are registered.</li>
           </ul>
         </div>
         

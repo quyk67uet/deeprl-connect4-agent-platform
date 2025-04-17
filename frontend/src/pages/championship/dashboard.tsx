@@ -284,7 +284,7 @@ const ChampionshipDashboard: React.FC = () => {
   // Get status message
   const getStatusMessage = () => {
     if (status.status === 'waiting') {
-      return `Waiting to start - ${status.team_count}/19 teams registered`;
+      return `Waiting to start - ${status.team_count}/20 teams registered`;
     } else if (status.status === 'in_progress') {
       return `In Progress - Round ${status.current_round}/${status.total_rounds}`;
     } else if (status.status === 'finished') {

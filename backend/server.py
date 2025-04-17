@@ -734,7 +734,7 @@ async def make_external_ai_move(game_id: str, ai_url: str):
         # Make request to external AI
         async with httpx.AsyncClient() as client:
             logger.info(f"Sending request to {ai_url}")
-            response = await client.post(ai_url, json=data, timeout=5.0)
+            response = await client.post(ai_url, json=data, timeout=10.0)
             
             logger.info(f"Response status code: {response.status_code}")
             
@@ -845,7 +845,7 @@ async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Op
             # Get move from external AI
             try:
                 async with httpx.AsyncClient() as client:
-                    response = await client.post(ai_url, json=data, timeout=5.0)
+                    response = await client.post(ai_url, json=data, timeout=10.0)
                     
                     logger.info(f"Response status code: {response.status_code}")
                     
@@ -1200,7 +1200,9 @@ async def register_team(team_data: TeamRegistration, background_tasks: Backgroun
     test_game_state = {
         "board": [[0]*7 for _ in range(6)],
         "current_player": 1,
-        "valid_moves": [0,1,2,3,4,5,6]
+        "valid_moves": [0,1,2,3,4,5,6],
+        "game_over": False,
+        "winner": None
     }
     
     try:
@@ -1208,7 +1210,7 @@ async def register_team(team_data: TeamRegistration, background_tasks: Backgroun
             response = await client.post(
                 team_data.api_endpoint, 
                 json=test_game_state, 
-                timeout=5.0
+                timeout=10.0
             )
             
             if response.status_code != 200:
@@ -1244,7 +1246,7 @@ async def register_team(team_data: TeamRegistration, background_tasks: Backgroun
     
     # Update team count
     team_count = len(championship_manager.teams)
-    max_teams = 19  # Giới hạn số đội (có thể điều chỉnh)
+    max_teams = 20  # Giới hạn số đội (có thể điều chỉnh)
     logger.info(f"Team {team_data.team_name} registered. Total teams: {team_count}/{max_teams}")
     
     # Đã bỏ đoạn code tự động bắt đầu championship khi đủ 19 đội
@@ -1510,7 +1512,9 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
         game_state = {
             "board": connect4_game.get_state()["board"],
             "current_player": connect4_game.current_player,
-            "valid_moves": connect4_game.get_valid_moves()
+            "valid_moves": connect4_game.get_valid_moves(),
+            "game_over": connect4_game.game_over,
+            "winner": connect4_game.winner
         }
         
         # Broadcast current state
@@ -1523,7 +1527,7 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
         })
         
         # Get move from the AI with timeout
-        column = await get_ai_move_with_timeout(endpoint, game_state, 5.0)
+        column = await get_ai_move_with_timeout(endpoint, game_state, 10.0)
         
         # If the AI didn't provide a valid move, use fallback
         if column is None or column not in connect4_game.get_valid_moves():
@@ -1581,12 +1585,14 @@ async def validate_endpoint(endpoint: str) -> bool:
     test_game_state = {
         "board": [[0]*7 for _ in range(6)],
         "current_player": 1,
-        "valid_moves": [0,1,2,3,4,5,6]
+        "valid_moves": [0,1,2,3,4,5,6],
+        "game_over": False,
+        "winner": None
     }
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post(endpoint, json=test_game_state, timeout=5.0)
+            response = await client.post(endpoint, json=test_game_state, timeout=10.0)
             
             if response.status_code != 200:
                 return False
@@ -1711,11 +1717,13 @@ async def startup_event():
         # Clear Redis cache on startup
         try:
             redis_conn = await get_redis_connection()
-            if redis_conn:
-                keys = await redis_conn.keys("*")
-                if keys:
-                    logger.info(f"Clearing {len(keys)} keys from Redis cache on startup")
-                    await redis_conn.delete(*keys)
+            if redis_conn is None:
+                raise HTTPException(status_code=500, detail="Redis connection not available")
+            
+            keys = await redis_conn.keys("*")
+            if keys:
+                logger.info(f"Clearing {len(keys)} keys from Redis cache on startup")
+                await redis_conn.delete(*keys)
         except Exception as e:
             logger.error(f"Error clearing Redis cache on startup: {e}")
     else:
