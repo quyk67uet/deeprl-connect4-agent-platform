@@ -11,10 +11,26 @@ import styles from '../../../styles/Championship.module.css';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
 
+// Determine if we should use secure connections
+const isSecureConnection = typeof window !== 'undefined' && 
+  (window.location.protocol === 'https:' || API_URL.startsWith('https://') || WS_URL.startsWith('wss://'));
+
+// Properly formatted WebSocket URL
+const getWebSocketUrl = (endpoint: string): string => {
+  // Extract base URL without protocol
+  const baseUrl = WS_URL.replace(/^wss?:\/\//, '');
+  
+  // Use secure protocol if on HTTPS
+  const protocol = isSecureConnection ? 'wss' : 'ws';
+  
+  return `${protocol}://${baseUrl}${endpoint}`;
+};
+
 // Interface definitions
 interface TeamScore {
   team_name: string;
   points: number;
+  consumed_time?: number;
 }
 
 interface Match {
@@ -43,6 +59,15 @@ interface ChampionshipStatus {
   total_rounds: number;
 }
 
+interface TeamStats {
+  team_name: string;
+  points: number;
+  consumed_time?: number;
+  wins: number;
+  losses: number;
+  draws: number;
+}
+
 const ChampionshipDashboard: React.FC = () => {
   const router = useRouter();
   
@@ -53,7 +78,7 @@ const ChampionshipDashboard: React.FC = () => {
     current_round: 0,
     total_rounds: 0
   });
-  const [leaderboard, setLeaderboard] = useState<TeamScore[]>([]);
+  const [leaderboard, setLeaderboard] = useState<TeamStats[]>([]);
   const [schedule, setSchedule] = useState<Schedule>({ rounds: [] });
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState<boolean>(false);
@@ -127,15 +152,42 @@ const ChampionshipDashboard: React.FC = () => {
       setSchedule(scheduleResponse.data || { rounds: [] });
     } catch (error) {
       console.error('Error loading dashboard data:', error);
-      toast.error('Failed to load dashboard data');
+      // Không hiển thị toast lỗi, chỉ log ra console
+      // Sẽ tiếp tục thử kết nối qua WebSocket
     }
   }, []);
   
   // Connect to WebSocket
   useEffect(() => {
-    const ws = new WebSocket(`${WS_URL}/ws/championship/dashboard`);
+    // Sử dụng hàm getWebSocketUrl để xử lý URL WebSocket đúng cách
+    const wsUrl = getWebSocketUrl('/ws/championship/dashboard');
+    console.log('Connecting WebSocket to:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
+    
+    // Thêm timeout để xử lý trường hợp WebSocket không kết nối được
+    const connectionTimeout = setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        console.log('WebSocket connection timeout - falling back to API polling');
+        // Fallback to API polling if WebSocket fails
+        loadInitialData();
+        
+        // Setup polling interval
+        const pollingInterval = setInterval(() => {
+          if (!document.hidden) { // Only poll when tab is visible
+            loadInitialData();
+          }
+        }, 5000); // Poll every 5 seconds
+        
+        // Cleanup polling on unmount
+        return () => {
+          clearInterval(pollingInterval);
+        };
+      }
+    }, 5000);
     
     ws.onopen = () => {
+      clearTimeout(connectionTimeout);
       setConnected(true);
       console.log('Connected to championship dashboard');
     };
@@ -260,7 +312,7 @@ const ChampionshipDashboard: React.FC = () => {
       // Try to reconnect after a delay
       setTimeout(() => {
         console.log('Attempting to reconnect...');
-        setSocket(new WebSocket(`${WS_URL}/ws/championship/dashboard`));
+        setSocket(new WebSocket(getWebSocketUrl('/ws/championship/dashboard')));
       }, 3000);
     };
     
@@ -275,6 +327,7 @@ const ChampionshipDashboard: React.FC = () => {
     
     // Cleanup on unmount
     return () => {
+      clearTimeout(connectionTimeout);
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.close();
       }
@@ -438,6 +491,10 @@ const ChampionshipDashboard: React.FC = () => {
                       <th>Rank</th>
                       <th>Team</th>
                       <th>Points</th>
+                      <th>W</th>
+                      <th>D</th>
+                      <th>L</th>
+                      <th>Time Used (s)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -446,6 +503,10 @@ const ChampionshipDashboard: React.FC = () => {
                         <td>{index + 1}</td>
                         <td>{team.team_name}</td>
                         <td>{team.points}</td>
+                        <td>{team.wins}</td>
+                        <td>{team.draws}</td>
+                        <td>{team.losses}</td>
+                        <td>{team.consumed_time ? team.consumed_time.toFixed(2) : '0.00'}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -36,24 +36,31 @@ interface GameState {
   draw: boolean;
 }
 
-interface ChampionshipMatchData {
+interface MatchData {
+  matchId: string;
   teamA: string;
   teamB: string;
+  teamAPoints: number;
+  teamBPoints: number;
   status: string;
   round: number;
   currentGame: number;
-  teamAPoints: number;
-  teamBPoints: number;
   spectatorCount: number;
+  teamAMatchTime: number;
+  teamBMatchTime: number;
+  teamAConsumedTime: number;
+  teamBConsumedTime: number;
+  turnTime: number;
 }
 
-interface ChampionshipGameData {
+interface GameData {
   gameNumber: number;
   firstPlayer: string;
   status: string;
+  currentTeam: string;
   teamAColor: string;
   teamBColor: string;
-  currentTeam?: string;
+  lastMoveTime?: number;
 }
 
 interface MoveData {
@@ -74,22 +81,29 @@ const ChampionshipBattlePage: React.FC = () => {
   });
   
   // Championship match data
-  const [matchData, setMatchData] = useState<ChampionshipMatchData>({
+  const [matchData, setMatchData] = useState<MatchData>({
+    matchId: '',
     teamA: '',
     teamB: '',
+    teamAPoints: 0,
+    teamBPoints: 0,
     status: 'scheduled',
     round: 0,
     currentGame: 0,
-    teamAPoints: 0,
-    teamBPoints: 0,
-    spectatorCount: 0
+    spectatorCount: 0,
+    teamAMatchTime: 240,
+    teamBMatchTime: 240,
+    teamAConsumedTime: 0,
+    teamBConsumedTime: 0,
+    turnTime: 10
   });
   
   // Championship game data
-  const [gameData, setGameData] = useState<ChampionshipGameData>({
-    gameNumber: 0,
-    firstPlayer: '',
+  const [gameData, setGameData] = useState<GameData>({
+    gameNumber: 1,
+    firstPlayer: 'team_a',
     status: 'scheduled',
+    currentTeam: 'team_a',
     teamAColor: 'red',
     teamBColor: 'yellow'
   });
@@ -98,8 +112,8 @@ const ChampionshipBattlePage: React.FC = () => {
   const [lastMove, setLastMove] = useState<MoveData | null>(null);
   
   // Connection state
-  const [socket, setSocket] = useState<WebSocket | null>(null);
   const [connected, setConnected] = useState<boolean>(false);
+  const [socket, setSocket] = useState<WebSocket | null>(null);
   
   // Refs to track board updates
   const boardRef = useRef<GameState['board']>(Array(6).fill(0).map(() => Array(7).fill(0)));
@@ -111,20 +125,20 @@ const ChampionshipBattlePage: React.FC = () => {
     console.log("Last move data:", moveData);
     
     // Always update the board state for championship matches to ensure reactivity
-    setGameState(prev => ({
-      ...prev,
+      setGameState(prev => ({
+        ...prev,
       board: newBoard.map((row: number[]) => [...row])
-    }));
-    
-    // Update the last move for highlighting
-    if (moveData) {
-      setLastMove(moveData);
-      lastMoveRef.current = moveData;
+      }));
+      
+      // Update the last move for highlighting
+      if (moveData) {
+        setLastMove(moveData);
+        lastMoveRef.current = moveData;
       console.log(`Highlighted move: Column ${moveData.column} by ${moveData.team}`);
-    }
-    
-    // Update board ref
-    boardRef.current = newBoard.map((row: number[]) => [...row]);
+      }
+      
+      // Update board ref
+      boardRef.current = newBoard.map((row: number[]) => [...row]);
   }, []);
 
   // Connect to WebSocket
@@ -199,14 +213,20 @@ const ChampionshipBattlePage: React.FC = () => {
             if (data.type === 'championship_match_info') {
               console.log('Updating match info');
               setMatchData({
+                matchId: data.match_id,
                 teamA: data.team_a,
                 teamB: data.team_b,
+                teamAPoints: data.team_a_points,
+                teamBPoints: data.team_b_points,
                 status: data.status,
                 round: data.round,
                 currentGame: data.current_game,
-                teamAPoints: data.team_a_points,
-                teamBPoints: data.team_b_points,
-                spectatorCount: data.spectator_count
+                spectatorCount: data.spectator_count,
+                teamAMatchTime: data.team_a_match_time,
+                teamBMatchTime: data.team_b_match_time,
+                teamAConsumedTime: data.team_a_consumed_time,
+                teamBConsumedTime: data.team_b_consumed_time,
+                turnTime: data.turn_time
               });
               return;
             }
@@ -218,9 +238,9 @@ const ChampionshipBattlePage: React.FC = () => {
                 gameNumber: data.game_number,
                 firstPlayer: data.first_player,
                 status: data.status,
-                teamAColor: data.team_a_color || 'red',
-                teamBColor: data.team_b_color || 'yellow',
-                currentTeam: data.current_player
+                currentTeam: data.current_player,
+                teamAColor: data.team_a_color,
+                teamBColor: data.team_b_color
               });
               
               if (data.state) {
@@ -247,8 +267,9 @@ const ChampionshipBattlePage: React.FC = () => {
                 gameNumber: data.game_number,
                 firstPlayer: data.first_player,
                 status: 'in_progress',
-                teamAColor: data.team_a_color || 'red',
-                teamBColor: data.team_b_color || 'yellow'
+                currentTeam: data.current_player,
+                teamAColor: data.team_a_color,
+                teamBColor: data.team_b_color
               });
               
               if (data.state) {
@@ -311,13 +332,23 @@ const ChampionshipBattlePage: React.FC = () => {
                   draw: data.state.game_over && !data.state.winner
                 };
                 
+                // Update time data
+                if (data.team_a_match_time !== undefined && data.team_b_match_time !== undefined) {
+                  setMatchData(prev => ({
+                    ...prev,
+                    teamAMatchTime: data.team_a_match_time,
+                    teamBMatchTime: data.team_b_match_time,
+                    teamAConsumedTime: data.team_a_consumed_time,
+                    teamBConsumedTime: data.team_b_consumed_time
+                  }));
+                }
+                
                 // Explicitly update the board for this move
                 updateBoard(newBoard, { column, team });
                 setGameState(newGameState);
                 
                 // Show a toast notification for the move
                 const teamName = team === 'team_a' ? matchData.teamA : matchData.teamB;
-                toast.info(`${teamName} played in column ${column + 1}`);
               }
               return;
             }
@@ -333,20 +364,24 @@ const ChampionshipBattlePage: React.FC = () => {
                 status: 'finished'
               }));
               
-              // Update match data with points
+              // Update match data with points and time
               setMatchData(prev => ({
                 ...prev,
                 teamAPoints: data.team_a_points,
-                teamBPoints: data.team_b_points
+                teamBPoints: data.team_b_points,
+                teamAMatchTime: data.team_a_match_time,
+                teamBMatchTime: data.team_b_match_time,
+                teamAConsumedTime: data.team_a_consumed_time,
+                teamBConsumedTime: data.team_b_consumed_time
               }));
               
               // Show toast notification
               if (winner === 'team_a') {
-                toast.success(`Game ${gameNumber} won by ${matchData.teamA}!`);
+                // toast.success(`Game ${gameNumber} won by ${matchData.teamA}!`);
               } else if (winner === 'team_b') {
-                toast.success(`Game ${gameNumber} won by ${matchData.teamB}!`);
+                // toast.success(`Game ${gameNumber} won by ${matchData.teamB}!`);
               } else {
-                toast.info(`Game ${gameNumber} ended in a draw!`);
+                // toast.info(`Game ${gameNumber} ended in a draw!`);
               }
               return;
             }
@@ -609,22 +644,35 @@ const ChampionshipBattlePage: React.FC = () => {
                   style={{ backgroundColor: gameData.teamAColor === 'red' ? '#e74c3c' : '#f1c40f' }}
                 ></div>
                 <div className={styles.teamInfo}>
-                  <div 
-                    className={styles.teamName}
-                    style={{ color: gameData.teamAColor === 'red' ? '#e74c3c' : '#f1c40f' }}
-                  >
-                    {matchData.teamA}
-                  </div>
+              <div 
+                className={styles.teamName}
+                style={{ color: gameData.teamAColor === 'red' ? '#e74c3c' : '#f1c40f' }}
+              >
+                {matchData.teamA}
+              </div>
                   <div className={styles.teamColorLabel}>
                     {gameData.teamAColor === 'red' ? '🔴 Red' : '🟡 Yellow'}
+              </div>
+              <div className={styles.teamScore}>{matchData.teamAPoints}</div>
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Match Time:</span>
+                      <span>
+                        {Math.max(0, Math.floor((matchData.teamAMatchTime || 0) / 60))}:
+                        {Math.max(0, (matchData.teamAMatchTime || 0) % 60).toFixed(0).padStart(2, '0')}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Time Used:</span>
+                      <span>{typeof matchData.teamAConsumedTime === 'number' ? matchData.teamAConsumedTime.toFixed(1) : '0.0'}s</span>
+                    </div>
                   </div>
-                  <div className={styles.teamScore}>{matchData.teamAPoints}</div>
                 </div>
                 {gameState.currentPlayer === 1 && gameData.firstPlayer === 'team_a' && 
                   <div className={styles.thinkingIndicator}>Thinking...</div>
                 }
-              </div>
-              
+            </div>
+            
               <div className={styles.versusContainer}>
                 <div className={styles.versusText}>VS</div>
                 <div className={styles.gameCount}>Game {gameData.gameNumber} of 4</div>
@@ -636,6 +684,9 @@ const ChampionshipBattlePage: React.FC = () => {
                     <span className={styles.gameScheduled}>Starting Soon</span>
                   }
                 </div>
+                <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', textAlign: 'center' }}>
+                  <span>Turn Time: {matchData.turnTime}s</span>
+                </div>
               </div>
               
               <div className={`${styles.teamCard} ${gameState.currentPlayer === 2 && gameData.firstPlayer === 'team_a' ? styles.activeTeam : 
@@ -645,16 +696,29 @@ const ChampionshipBattlePage: React.FC = () => {
                   style={{ backgroundColor: gameData.teamBColor === 'red' ? '#e74c3c' : '#f1c40f' }}
                 ></div>
                 <div className={styles.teamInfo}>
-                  <div 
-                    className={styles.teamName}
-                    style={{ color: gameData.teamBColor === 'red' ? '#e74c3c' : '#f1c40f' }}
-                  >
-                    {matchData.teamB}
-                  </div>
+              <div 
+                className={styles.teamName}
+                style={{ color: gameData.teamBColor === 'red' ? '#e74c3c' : '#f1c40f' }}
+              >
+                {matchData.teamB}
+              </div>
                   <div className={styles.teamColorLabel}>
                     {gameData.teamBColor === 'red' ? '🔴 Red' : '🟡 Yellow'}
+              </div>
+              <div className={styles.teamScore}>{matchData.teamBPoints}</div>
+                  <div style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Match Time:</span>
+                      <span>
+                        {Math.max(0, Math.floor((matchData.teamBMatchTime || 0) / 60))}:
+                        {Math.max(0, (matchData.teamBMatchTime || 0) % 60).toFixed(0).padStart(2, '0')}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Time Used:</span>
+                      <span>{typeof matchData.teamBConsumedTime === 'number' ? matchData.teamBConsumedTime.toFixed(1) : '0.0'}s</span>
+                    </div>
                   </div>
-                  <div className={styles.teamScore}>{matchData.teamBPoints}</div>
                 </div>
                 {(gameState.currentPlayer === 2 && gameData.firstPlayer === 'team_a' || 
                   gameState.currentPlayer === 1 && gameData.firstPlayer === 'team_b') && 
@@ -672,8 +736,8 @@ const ChampionshipBattlePage: React.FC = () => {
                       (gameData.firstPlayer === 'team_a' ? matchData.teamA : matchData.teamB) : 
                       (gameData.firstPlayer === 'team_a' ? matchData.teamB : matchData.teamA)}</span> : 
                     gameData.status === 'finished' ? ' Completed' : ' Starting soon'}
-                </div>
-                
+          </div>
+          
                 <Board
                   board={gameState.board}
                   currentPlayer={gameState.currentPlayer}
@@ -691,16 +755,16 @@ const ChampionshipBattlePage: React.FC = () => {
                         style={{ backgroundColor: gameData.teamAColor === 'red' ? '#e74c3c' : '#f1c40f' }}
                       ></div>
                       <span>{matchData.teamA} {gameData.teamAColor === 'red' ? '(Red)' : '(Yellow)'}</span>
-                    </div>
+            </div>
                     <div className={styles.legendItem}>
                       <div 
                         className={styles.colorIndicator}
                         style={{ backgroundColor: gameData.teamBColor === 'red' ? '#e74c3c' : '#f1c40f' }}
                       ></div>
                       <span>{matchData.teamB} {gameData.teamBColor === 'red' ? '(Red)' : '(Yellow)'}</span>
-                    </div>
-                  </div>
-                  
+            </div>
+          </div>
+          
                   <div className={styles.moveHistory}>
                     {lastMove && (
                       <div className={styles.lastMoveInfo}>
@@ -708,11 +772,11 @@ const ChampionshipBattlePage: React.FC = () => {
                         <span className={styles.moveDetail}>
                           {lastMove.team === 'team_a' ? matchData.teamA : matchData.teamB} placed in column {lastMove.column + 1}
                         </span>
-                      </div>
+            </div>
                     )}
-                  </div>
-                </div>
-              </div>
+            </div>
+          </div>
+        </div>
             </div>
           </div>
         </div>
@@ -724,7 +788,7 @@ const ChampionshipBattlePage: React.FC = () => {
         </div>
       </div>
       
-      <ToastContainer position="bottom-right" autoClose={3000} />
+      <ToastContainer position="bottom-right" autoClose={500} />
     </>
   );
 };

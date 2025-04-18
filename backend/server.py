@@ -274,6 +274,13 @@ class Match:
         self.end_time = None
         self.current_game = 0  # 0-based index
         self.spectator_count = 0
+        
+        # Time tracking variables with float initialization
+        self.team_a_match_time = 240.0  # 4 minutes (240 seconds)
+        self.team_b_match_time = 240.0  # 4 minutes (240 seconds)
+        self.team_a_consumed_time = 0.0  # Time consumed (floating point)
+        self.team_b_consumed_time = 0.0  # Time consumed (floating point)
+        self.turn_time = 10.0  # 10 seconds per turn
 
 class Game:
     def __init__(self, game_number: int, first_player: str):
@@ -282,6 +289,9 @@ class Game:
         self.winner = None  # team_a, team_b, draw, None
         self.status = "scheduled"  # scheduled, in_progress, finished
         self.game_state = None
+        
+        # Thêm biến theo dõi thời gian cho từng nước đi
+        self.last_move_time = None  # Thời gian của nước đi cuối cùng
 
 # Championship Manager
 class ChampionshipManager:
@@ -293,49 +303,102 @@ class ChampionshipManager:
         self.current_round = 0
         self.status = "waiting"  # waiting, in_progress, finished
         self.championship_id = str(uuid.uuid4())
+        self.team_consumed_times = {}  # team_name -> total_consumed_time
+        # Thêm thống kê thắng/thua/hòa
+        self.team_stats = {}  # team_name -> {wins, losses, draws}
+        
+        # Additional logging setup for time tracking
+        logger.info("Championship manager initialized")
 
     def add_team(self, team_name: str, api_endpoint: str) -> bool:
         if team_name in self.teams:
             return False
         self.teams[team_name] = api_endpoint
         self.leaderboard[team_name] = 0
+        self.team_consumed_times[team_name] = 0.0  # Initialize to 0.0 to ensure float
+        # Khởi tạo thống kê thắng/thua/hòa
+        self.team_stats[team_name] = {"wins": 0, "losses": 0, "draws": 0}
+        logger.info(f"Team {team_name} added with initial consumed time: 0.0s")
         return True
 
     def generate_schedule(self):
-        """Generate a round-robin tournament schedule for all teams."""
-        if len(self.teams) < 2:
-            logger.error("Not enough teams to generate schedule")
-            return False
-        
+        """Generate the championship schedule using a round-robin tournament format."""
         team_names = list(self.teams.keys())
+        if len(team_names) < 2:
+            logger.warning("Cannot generate schedule with less than 2 teams")
+            return
         
-        # If odd number of teams, add a dummy team for scheduling
-        if len(team_names) % 2 == 1:
-            team_names.append(None)
+        random.shuffle(team_names)  # Shuffle teams for randomness
         
-        n = len(team_names)
-        rounds = []
+        # Calculate number of rounds and matches per round
+        num_teams = len(team_names)
+        if num_teams % 2 == 1:
+            team_names.append("BYE")  # Add a dummy team if odd number of teams
+            num_teams += 1
         
-        for i in range(n - 1):
+        num_rounds = num_teams - 1
+        num_matches_per_round = num_teams // 2
+        
+        # Generate matches for each round using the "circle method" for round-robin scheduling
+        self.rounds = []
+        
+        # Fix positions for all teams
+        positions = list(range(num_teams))
+        
+        for round_num in range(num_rounds):
             round_matches = []
-            for j in range(n // 2):
-                team_a = team_names[j]
-                team_b = team_names[n - 1 - j]
+            
+            # Rotate positions - keep position[0] fixed, rotate all others clockwise
+            if round_num > 0:
+                positions = [positions[0]] + [positions[-1]] + positions[1:-1]
+            
+            # Create matches for this round based on positions
+            for i in range(num_matches_per_round):
+                position1 = positions[i]
+                position2 = positions[num_teams - 1 - i]
                 
-                # Skip matches involving the dummy team
-                if team_a is not None and team_b is not None:
-                    match_id = str(uuid.uuid4())
-                    match = Match(match_id, team_a, team_b, i)
-                    self.matches[match_id] = match
-                    round_matches.append(match_id)
+                team1 = team_names[position1]
+                team2 = team_names[position2]
+                
+                # Skip matches involving the dummy "BYE" team
+                if team1 == "BYE" or team2 == "BYE":
+                    continue
+                
+                # Verify teams are different
+                if team1 == team2:
+                    logger.error(f"Scheduling error: team {team1} matched against itself in round {round_num+1}")
+                    continue
+                
+                # Create match with alternating home/away
+                if round_num % 2 == 0 or i % 2 == 0:
+                    home_team, away_team = team1, team2
+                else:
+                    home_team, away_team = team2, team1
+                
+                match_id = f"{self.championship_id}_{round_num}_{i}"
+                match = Match(match_id, home_team, away_team, round_num)
+                
+                # Initialize time settings with floating point
+                match.team_a_match_time = 240.0  # 4 minutes
+                match.team_b_match_time = 240.0  # 4 minutes
+                match.team_a_consumed_time = 0.0
+                match.team_b_consumed_time = 0.0
+                
+                self.matches[match_id] = match
+                round_matches.append(match_id)
             
-            rounds.append(round_matches)
-            
-            # Rotate the teams (keeping the first team fixed)
-            team_names = [team_names[0]] + [team_names[-1]] + team_names[1:-1]
+            if round_matches:  # Only add rounds with actual matches
+                self.rounds.append(round_matches)
         
-        self.rounds = rounds
-        return True
+        # Log the generated schedule
+        logger.info(f"Championship schedule generated with {len(self.rounds)} rounds")
+        for r_idx, round_matches in enumerate(self.rounds):
+            matches_info = []
+            for m_id in round_matches:
+                match = self.matches.get(m_id)
+                if match:
+                    matches_info.append(f"{match.team_a} vs {match.team_b}")
+            logger.info(f"Round {r_idx+1}: {', '.join(matches_info)}")
 
     def get_team_endpoint(self, team_name: str) -> Optional[str]:
         return self.teams.get(team_name)
@@ -346,23 +409,51 @@ class ChampionshipManager:
         if not match or match.status != "finished":
             return
         
-        # Award match points: 3 for win, 1 for draw, 0 for loss
+        # Award match points based on team points in the match
+        self.leaderboard[match.team_a] += match.team_a_points
+        self.leaderboard[match.team_b] += match.team_b_points
+        
+        # Update total consumed time for each team - ensure it's not negative
+        current_a_time = self.team_consumed_times.get(match.team_a, 0)
+        current_b_time = self.team_consumed_times.get(match.team_b, 0)
+        
+        # Add the consumed times from this match
+        new_a_time = current_a_time + max(0, match.team_a_consumed_time)
+        new_b_time = current_b_time + max(0, match.team_b_consumed_time)
+        
+        # Update with the new values
+        self.team_consumed_times[match.team_a] = new_a_time
+        self.team_consumed_times[match.team_b] = new_b_time
+        
+        logger.info(f"Updated team consumed times: {match.team_a}={new_a_time:.2f}s, {match.team_b}={new_b_time:.2f}s")
+        
+        # Update win/loss/draw statistics
         if match.winner == "team_a":
-            self.leaderboard[match.team_a] += 3
+            self.team_stats[match.team_a]["wins"] += 1
+            self.team_stats[match.team_b]["losses"] += 1
         elif match.winner == "team_b":
-            self.leaderboard[match.team_b] += 3
+            self.team_stats[match.team_b]["wins"] += 1
+            self.team_stats[match.team_a]["losses"] += 1
         elif match.winner == "draw":
-            self.leaderboard[match.team_a] += 1
-            self.leaderboard[match.team_b] += 1
+            self.team_stats[match.team_a]["draws"] += 1
+            self.team_stats[match.team_b]["draws"] += 1
 
     def get_leaderboard(self) -> List[Dict]:
-        """Return leaderboard sorted by points."""
+        """Return leaderboard sorted by points, then by consumed time (ascending)."""
+        # Sort by points (descending) and then by consumed time (ascending)
         sorted_teams = sorted(
-            self.leaderboard.items(), 
-            key=lambda x: x[1], 
+            [(team, points, self.team_consumed_times.get(team, 0), self.team_stats.get(team, {"wins": 0, "losses": 0, "draws": 0})) 
+             for team, points in self.leaderboard.items()],
+            key=lambda x: (x[1], -x[2]),  # First by points (descending), then by -consumed_time (ascending)
             reverse=True
         )
-        return [{"team_name": team, "points": points} for team, points in sorted_teams]
+        return [{"team_name": team, 
+                "points": points, 
+                "consumed_time": max(0, consumed_time),  # Đảm bảo giá trị không âm 
+                "wins": stats["wins"],
+                "losses": stats["losses"],
+                "draws": stats["draws"]}
+                for team, points, consumed_time, stats in sorted_teams]
 
     def get_match_by_id(self, match_id: str) -> Optional[Match]:
         return self.matches.get(match_id)
@@ -1262,7 +1353,9 @@ async def get_championship_status():
         "status": championship_manager.status,
         "team_count": team_count,
         "current_round": championship_manager.current_round + 1 if championship_manager.rounds else 0,
-        "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0
+        "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0,
+        "turn_time": 10,  # Default turn time in seconds
+        "match_time": 240  # Default match time per team in seconds (4 minutes)
     }
 
 # Get championship leaderboard
@@ -1289,7 +1382,11 @@ async def get_championship_schedule():
                     "status": match.status,
                     "winner": match.winner,
                     "team_a_points": match.team_a_points,
-                    "team_b_points": match.team_b_points
+                    "team_b_points": match.team_b_points,
+                    "team_a_consumed_time": match.team_a_consumed_time,
+                    "team_b_consumed_time": match.team_b_consumed_time,
+                    "team_a_match_time": match.team_a_match_time,
+                    "team_b_match_time": match.team_b_match_time
                 })
         schedule.append({"round": round_idx + 1, "matches": matches})
     
@@ -1382,6 +1479,15 @@ async def execute_match(match_id: str):
         Game(4, "team_b")   # Game 4: Team B starts
     ]
     
+    # Reset time counters for this match with consistent float values
+    match.team_a_match_time = 240.0  # 4 minutes = 240 seconds
+    match.team_b_match_time = 240.0  # 4 minutes = 240 seconds
+    match.team_a_consumed_time = 0.0
+    match.team_b_consumed_time = 0.0
+    
+    # Log initial time values 
+    logger.info(f"Match {match_id} started with initial time values: A={match.team_a_match_time}s, B={match.team_b_match_time}s")
+    
     # Validate both endpoints before match
     team_a_endpoint = championship_manager.get_team_endpoint(match.team_a)
     team_b_endpoint = championship_manager.get_team_endpoint(match.team_b)
@@ -1392,38 +1498,126 @@ async def execute_match(match_id: str):
     if not team_a_valid or not team_b_valid:
         logger.warning(f"Match {match_id}: One or both endpoints failed validation")
     
-    # Broadcast match start
+    # Broadcast match start with correct time information
     await broadcast_dashboard_update("match_update", {
         "match_id": match_id,
         "status": "in_progress",
         "team_a": match.team_a,
         "team_b": match.team_b,
-        "round": match.round_number + 1
+        "round": match.round_number + 1,
+        "team_a_match_time": match.team_a_match_time,
+        "team_b_match_time": match.team_b_match_time,
+        "team_a_consumed_time": match.team_a_consumed_time,
+        "team_b_consumed_time": match.team_b_consumed_time,
+        "turn_time": match.turn_time
     })
     
-    # Set match start time for timeout tracking
-    match_start_time = time.time()
-    match_timeout = 300  # 5 minutes (300 seconds)
+    # Flag to track if the match should end early
+    should_end_early = False
+    team_out_of_time = None
     
     # Play all 4 games
     for game_idx, game in enumerate(match.games):
+        # Check if we should end early due to score difference - but ONLY if one team has run out of time
+        # We'll still play all 4 games but just mark the match winner early
+        match_winner_decided = False
+        if game_idx > 0:  # Only check after the first game
+            remaining_games = len(match.games) - game_idx
+            # If one team can't mathematically win anymore, mark match winner but continue playing
+            if match.team_a_points > match.team_b_points + remaining_games:
+                match_winner_decided = True
+                match.winner = "team_a"
+                logger.info(f"Match {match_id} winner decided early: {match.team_a} (points: {match.team_a_points} vs {match.team_b_points})")
+            elif match.team_b_points > match.team_a_points + remaining_games:
+                match_winner_decided = True
+                match.winner = "team_b"
+                logger.info(f"Match {match_id} winner decided early: {match.team_b} (points: {match.team_b_points} vs {match.team_a_points})")
+            
+            # Notify clients if the match winner is decided, but don't end early
+            if match_winner_decided:
+                await broadcast_battle_update(match_id, {
+                    "type": "winner_decided_early",
+                    "reason": "score_difference",
+                    "winner": match.winner,
+                    "team_a_points": match.team_a_points,
+                    "team_b_points": match.team_b_points,
+                    "team_a_match_time": max(0, match.team_a_match_time),
+                    "team_b_match_time": max(0, match.team_b_match_time),
+                    "team_a_consumed_time": match.team_a_consumed_time,
+                    "team_b_consumed_time": match.team_b_consumed_time,
+                    "remaining_games": remaining_games
+                })
+                # Continue playing all games, don't break early
+        
+        # Check if a team has run out of match time (non-negative check) - this is the only case where we end early
+        if match.team_a_match_time <= 0:
+            team_out_of_time = "team_a"
+            logger.info(f"Team A ({match.team_a}) has run out of total match time")
+            
+            # Award points to team B for all remaining games
+            remaining_games = len(match.games) - game_idx
+            match.team_b_points += remaining_games
+            match.winner = "team_b"
+            
+            # Broadcast time out message
+            await broadcast_battle_update(match_id, {
+                "type": "match_time_out",
+                "team": match.team_a,
+                "remaining_games": remaining_games,
+                "team_a_points": match.team_a_points,
+                "team_b_points": match.team_b_points,
+                "team_a_match_time": 0,  # Set explicitly to 0
+                "team_b_match_time": max(0, match.team_b_match_time),
+                "team_a_consumed_time": match.team_a_consumed_time,
+                "team_b_consumed_time": match.team_b_consumed_time
+            })
+            
+            # End match early in case of time out
+            break
+            
+        if match.team_b_match_time <= 0:
+            team_out_of_time = "team_b"
+            logger.info(f"Team B ({match.team_b}) has run out of total match time")
+            
+            # Award points to team A for all remaining games
+            remaining_games = len(match.games) - game_idx
+            match.team_a_points += remaining_games
+            match.winner = "team_a"
+            
+            # Broadcast time out message
+            await broadcast_battle_update(match_id, {
+                "type": "match_time_out",
+                "team": match.team_b,
+                "remaining_games": remaining_games,
+                "team_a_points": match.team_a_points,
+                "team_b_points": match.team_b_points,
+                "team_a_match_time": max(0, match.team_a_match_time),
+                "team_b_match_time": 0,  # Set explicitly to 0
+                "team_a_consumed_time": match.team_a_consumed_time,
+                "team_b_consumed_time": match.team_b_consumed_time
+            })
+            
+            # End match early in case of time out
+            break
+        
         match.current_game = game_idx
         game.status = "in_progress"
         
-        # Check if we've exceeded match timeout
-        if time.time() - match_start_time > match_timeout:
-            logger.warning(f"Match {match_id} exceeded time limit. Declaring draw.")
-            match.winner = "draw"
-            break
+        # Log thời gian trước khi bắt đầu ván
+        logger.info(f"Game {game.game_number} starting with time values: A={match.team_a_match_time}s, B={match.team_b_match_time}s")
         
         # Play the game
         game_result = await play_game(match_id, game, team_a_endpoint, team_b_endpoint)
+        
+        # Log thời gian sau khi kết thúc ván
+        logger.info(f"Game {game.game_number} completed with time values: A={match.team_a_match_time}s, B={match.team_b_match_time}s")
+        logger.info(f"Consumed time after game {game.game_number}: A={match.team_a_consumed_time}s, B={match.team_b_consumed_time}s")
         
         # Update game result
         game.winner = game_result["winner"]
         game.status = "finished"
         
-        # Update match points
+        # Update points based on game result
         if game.winner == "team_a":
             match.team_a_points += 1
         elif game.winner == "team_b":
@@ -1432,44 +1626,78 @@ async def execute_match(match_id: str):
             match.team_a_points += 0.5
             match.team_b_points += 0.5
         
-        # Broadcast game result
+        # Broadcast game result with time information
         await broadcast_battle_update(match_id, {
             "type": "game_complete",
             "game_number": game.game_number,
             "winner": game.winner,
+            "reason": game_result.get("reason", "game_completed"),
             "team_a_points": match.team_a_points,
-            "team_b_points": match.team_b_points
+            "team_b_points": match.team_b_points,
+            "team_a_match_time": max(0, match.team_a_match_time),
+            "team_b_match_time": max(0, match.team_b_match_time),
+            "team_a_consumed_time": match.team_a_consumed_time,
+            "team_b_consumed_time": match.team_b_consumed_time,
+            "game_over": game_result.get("game_over", True),
+            "winner_player": game_result.get("winner_player", None)
         })
     
-    # Determine match winner
+    # Determine match winner if not already decided
     match.status = "finished"
     match.end_time = datetime.now()
     
-    if match.team_a_points > match.team_b_points:
-        match.winner = "team_a"
-    elif match.team_b_points > match.team_a_points:
-        match.winner = "team_b"
-    else:
-        match.winner = "draw"
+    if not match.winner:  # Only determine winner if not already set (from early decision)
+        if match.team_a_points > match.team_b_points:
+            match.winner = "team_a"
+        elif match.team_b_points > match.team_a_points:
+            match.winner = "team_b"
+        else:
+            match.winner = "draw"
+    
+    # Calculate total duration
+    match_duration = (match.end_time - match.start_time).total_seconds()
+    
+    # Count actual completed games
+    completed_games = sum(1 for g in match.games if g.status == "finished")
+    
+    # Build result message with additional info
+    result_message = {
+        "match_id": match_id,
+        "status": "finished",
+        "winner": match.winner,
+        "team_a_points": match.team_a_points,
+        "team_b_points": match.team_b_points,
+        "team_a_consumed_time": match.team_a_consumed_time,
+        "team_b_consumed_time": match.team_b_consumed_time,
+        "team_a_match_time": max(0, match.team_a_match_time),
+        "team_b_match_time": max(0, match.team_b_match_time),
+        "games_played": completed_games,
+        "total_games": len(match.games),
+        "match_duration": match_duration
+    }
+    
+    # Add early termination info if applicable
+    if should_end_early:
+        result_message["early_termination"] = True
+        result_message["reason"] = "score_difference"
+    elif team_out_of_time:
+        result_message["early_termination"] = True
+        result_message["reason"] = "time_out"
+        result_message["team_out_of_time"] = team_out_of_time
     
     # Update leaderboard
     championship_manager.update_leaderboard(match_id)
     
     # Broadcast match result
-    await broadcast_dashboard_update("match_update", {
-        "match_id": match_id,
-        "status": "finished",
-        "winner": match.winner,
-        "team_a_points": match.team_a_points,
-        "team_b_points": match.team_b_points
-    })
+    await broadcast_dashboard_update("match_update", result_message)
     
     # Broadcast updated leaderboard
     await broadcast_dashboard_update("leaderboard_update", {
         "leaderboard": championship_manager.get_leaderboard()
     })
     
-    logger.info(f"Match {match_id} completed: {match.team_a} vs {match.team_b}, Winner: {match.winner}")
+    logger.info(f"Match {match_id} completed: {match.team_a} vs {match.team_b}, Winner: {match.winner}, Points: {match.team_a_points}-{match.team_b_points}")
+    logger.info(f"Consumed time: {match.team_a} = {match.team_a_consumed_time}s, {match.team_b} = {match.team_b_consumed_time}s")
 
 async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endpoint: str) -> Dict:
     """Play a single game between two teams."""
@@ -1489,14 +1717,23 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
     player1_endpoint = team_a_endpoint if player1_team == "team_a" else team_b_endpoint
     player2_endpoint = team_b_endpoint if player2_team == "team_b" else team_a_endpoint
     
-    # Broadcast game start
+    # Đảm bảo thời gian mặc định không vượt quá 240s và không bị âm
+    match.team_a_match_time = min(max(0, match.team_a_match_time), 240)
+    match.team_b_match_time = min(max(0, match.team_b_match_time), 240)
+    
+    # Broadcast game start with time information
     await broadcast_battle_update(match_id, {
         "type": "game_start",
         "game_number": game.game_number,
         "first_player": game.first_player,
         "team_a_color": "red" if player1_team == "team_a" else "yellow",
         "team_b_color": "red" if player1_team == "team_b" else "yellow",
-        "state": connect4_game.get_state()
+        "state": connect4_game.get_state(),
+        "team_a_match_time": match.team_a_match_time,
+        "team_b_match_time": match.team_b_match_time,
+        "team_a_consumed_time": match.team_a_consumed_time,
+        "team_b_consumed_time": match.team_b_consumed_time,
+        "turn_time": match.turn_time
     })
     
     # Play the game until completion or timeout
@@ -1508,6 +1745,31 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
         current_team = player1_team if connect4_game.current_player == 1 else player2_team
         endpoint = player1_endpoint if connect4_game.current_player == 1 else player2_endpoint
         
+        # Check if the team has enough match time left
+        current_match_time = match.team_a_match_time if current_team == "team_a" else match.team_b_match_time
+        
+        if current_match_time <= 0:
+            # Team has run out of match time, they lose this game and all remaining games
+            logger.warning(f"Team {current_team} has run out of match time")
+            
+            # Set winner to the other team
+            winner = "team_b" if current_team == "team_a" else "team_a"
+            
+            # Broadcast time-out with correct time values
+            await broadcast_battle_update(match_id, {
+                "type": "time_out",
+                "game_number": game.game_number,
+                "team": current_team,
+                "reason": "match_time_exceeded",
+                "winner": winner,
+                "team_a_match_time": max(0, match.team_a_match_time),
+                "team_b_match_time": max(0, match.team_b_match_time),
+                "team_a_consumed_time": match.team_a_consumed_time,
+                "team_b_consumed_time": match.team_b_consumed_time
+            })
+            
+            return {"winner": winner, "moves": move_count, "reason": "match_time_exceeded"}
+        
         # Prepare game state for AI
         game_state = {
             "board": connect4_game.get_state()["board"],
@@ -1517,43 +1779,83 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
             "winner": connect4_game.winner
         }
         
-        # Broadcast current state
+        # Broadcast current state with time information
         await broadcast_battle_update(match_id, {
             "type": "game_update",
             "game_number": game.game_number,
             "current_player": current_team,
             "state": connect4_game.get_state(),
-            "move_count": move_count
+            "move_count": move_count,
+            "team_a_match_time": max(0, match.team_a_match_time),
+            "team_b_match_time": max(0, match.team_b_match_time),
+            "team_a_consumed_time": match.team_a_consumed_time,
+            "team_b_consumed_time": match.team_b_consumed_time,
+            "turn_time": match.turn_time
         })
         
-        # Get move from the AI with timeout
-        column = await get_ai_move_with_timeout(endpoint, game_state, 10.0)
+        # Record move start time
+        move_start_time = time.time()
+        game.last_move_time = move_start_time
         
-        # If the AI didn't provide a valid move, use fallback
+        # Get move from the AI with turn time limit
+        column = await get_ai_move_with_timeout(endpoint, game_state, match.turn_time)
+        
+        # Calculate time taken for this move
+        move_time = time.time() - move_start_time
+        move_time = min(move_time, match.turn_time)  # Cap at maximum turn time
+        
+        # Update team's match time and consumed time
+        if current_team == "team_a":
+            match.team_a_match_time = max(0, match.team_a_match_time - move_time)
+            match.team_a_consumed_time += move_time
+            logger.info(f"Team A used {move_time:.2f}s for this move. Remaining: {match.team_a_match_time:.2f}s, Total consumed: {match.team_a_consumed_time:.2f}s")
+        else:
+            match.team_b_match_time = max(0, match.team_b_match_time - move_time)
+            match.team_b_consumed_time += move_time
+            logger.info(f"Team B used {move_time:.2f}s for this move. Remaining: {match.team_b_match_time:.2f}s, Total consumed: {match.team_b_consumed_time:.2f}s")
+        
+        # Check if move was made within turn time
         if column is None or column not in connect4_game.get_valid_moves():
-            valid_moves = connect4_game.get_valid_moves()
-            column = valid_moves[0] if valid_moves else None
-            logger.warning(f"Using fallback move for {current_team}: {column}")
+            # Turn timeout or invalid move, team loses this game
+            logger.warning(f"Team {current_team} made an invalid move or exceeded turn time: {column}")
+            
+            # Set winner to the other team
+            winner = "team_b" if current_team == "team_a" else "team_a"
+            
+            # Broadcast turn timeout with correct time values
+            await broadcast_battle_update(match_id, {
+                "type": "time_out",
+                "game_number": game.game_number,
+                "team": current_team,
+                "reason": "turn_time_exceeded",
+                "winner": winner,
+                "team_a_match_time": max(0, match.team_a_match_time),
+                "team_b_match_time": max(0, match.team_b_match_time),
+                "team_a_consumed_time": match.team_a_consumed_time,
+                "team_b_consumed_time": match.team_b_consumed_time
+            })
+            
+            return {"winner": winner, "moves": move_count, "reason": "turn_time_exceeded"}
         
         # Make the move
-        if column is not None:
-            connect4_game.make_move(column)
-            move_count += 1
-            
-            # Broadcast move
-            await broadcast_battle_update(match_id, {
-                "type": "move_made",
-                "game_number": game.game_number,
-                "column": column,
-                "team": current_team,
-                "state": connect4_game.get_state()
-            })
-        else:
-            # No valid moves available, game is a draw
-            logger.warning(f"No valid moves available for {current_team}")
-            break
+        connect4_game.make_move(column)
+        move_count += 1
+        
+        # Broadcast move with updated time information
+        await broadcast_battle_update(match_id, {
+            "type": "move_made",
+            "game_number": game.game_number,
+            "column": column,
+            "team": current_team,
+            "state": connect4_game.get_state(),
+            "move_time": move_time,
+            "team_a_match_time": max(0, match.team_a_match_time),
+            "team_b_match_time": max(0, match.team_b_match_time),
+            "team_a_consumed_time": match.team_a_consumed_time,
+            "team_b_consumed_time": match.team_b_consumed_time
+        })
     
-    # Determine winner
+    # Determine winner based on game result
     if connect4_game.winner == 1:
         winner = player1_team
     elif connect4_game.winner == 2:
@@ -1561,24 +1863,16 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
     else:
         winner = "draw"
     
-    return {"winner": winner, "moves": move_count}
-
-async def get_ai_move_with_timeout(endpoint: str, game_state: Dict, timeout: float) -> Optional[int]:
-    """Get a move from an AI endpoint with a timeout."""
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(endpoint, json=game_state, timeout=timeout)
-            
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("move")
-    except Exception as e:
-        logger.error(f"Error getting AI move: {str(e)}")
-    
-    return None
+    return {
+        "winner": winner, 
+        "moves": move_count, 
+        "reason": "game_completed",
+        "game_over": connect4_game.game_over,
+        "winner_player": connect4_game.winner
+    }
 
 async def validate_endpoint(endpoint: str) -> bool:
-    """Validate if an endpoint is responsive and returns valid moves."""
+    """Validate if an endpoint responds correctly to a test request."""
     if not endpoint:
         return False
     
@@ -1591,20 +1885,95 @@ async def validate_endpoint(endpoint: str) -> bool:
     }
     
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(endpoint, json=test_game_state, timeout=10.0)
-            
-            if response.status_code != 200:
-                return False
-            
-            data = response.json()
-            if "move" not in data or not isinstance(data["move"], int) or data["move"] not in test_game_state["valid_moves"]:
-                return False
-            
-            return True
+        # Tạo httpx client với verify=False để bỏ qua lỗi SSL
+        async with httpx.AsyncClient(verify=False) as client:
+            # Thử HTTPS trước
+            try:
+                # Đảm bảo endpoint có protocol
+                if not endpoint.startswith(('http://', 'https://')):
+                    endpoint = 'https://' + endpoint
+                
+                response = await client.post(
+                    endpoint, 
+                    json=test_game_state, 
+                    timeout=10.0
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "move" in data and isinstance(data["move"], int) and data["move"] in test_game_state["valid_moves"]:
+                        return True
+            except Exception as e:
+                logger.warning(f"HTTPS attempt failed for {endpoint}: {e}")
+                
+                # Thử lại với HTTP nếu HTTPS thất bại
+                try:
+                    # Chuyển sang HTTP
+                    http_endpoint = endpoint.replace('https://', 'http://')
+                    if not http_endpoint.startswith('http://'):
+                        http_endpoint = 'http://' + http_endpoint.replace('https://', '')
+                    
+                    response = await client.post(
+                        http_endpoint, 
+                        json=test_game_state, 
+                        timeout=10.0
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "move" in data and isinstance(data["move"], int) and data["move"] in test_game_state["valid_moves"]:
+                            logger.info(f"HTTP endpoint validated successfully: {http_endpoint}")
+                            return True
+                except Exception as e:
+                    logger.error(f"HTTP attempt also failed for {http_endpoint}: {e}")
+        
+        return False
     except Exception as e:
         logger.error(f"Error validating endpoint {endpoint}: {e}")
         return False
+
+async def get_ai_move_with_timeout(endpoint: str, game_state: Dict, timeout: float) -> Optional[int]:
+    """Get a move from an AI endpoint with a timeout."""
+    if not endpoint:
+        logger.error("No endpoint provided")
+        return None
+        
+    try:
+        # Tạo httpx client với verify=False để bỏ qua lỗi SSL
+        async with httpx.AsyncClient(verify=False) as client:
+            # Đảm bảo endpoint có protocol
+            if not endpoint.startswith(('http://', 'https://')):
+                endpoint = 'https://' + endpoint
+                
+            try:
+                response = await client.post(endpoint, json=game_state, timeout=timeout)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "move" in data and isinstance(data["move"], int):
+                        return data["move"]
+            except Exception as e:
+                logger.warning(f"HTTPS attempt failed: {str(e)}")
+                
+                # Thử lại với HTTP nếu HTTPS thất bại
+                try:
+                    # Chuyển sang HTTP
+                    http_endpoint = endpoint.replace('https://', 'http://')
+                    if not http_endpoint.startswith('http://'):
+                        http_endpoint = 'http://' + http_endpoint.replace('https://', '')
+                    
+                    response = await client.post(http_endpoint, json=game_state, timeout=timeout)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "move" in data and isinstance(data["move"], int):
+                            return data["move"]
+                except Exception as e:
+                    logger.error(f"HTTP attempt also failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error getting AI move: {str(e)}")
+    
+    return None
 
 # WebSocket broadcast functions
 async def broadcast_dashboard_update(update_type: str, data: Dict):
@@ -1617,6 +1986,16 @@ async def broadcast_dashboard_update(update_type: str, data: Dict):
 
 async def broadcast_battle_update(match_id: str, data: Dict):
     """Broadcast updates to all WebSocket connections for a specific battle."""
+    # Ensure game_state contains game_over and winner information if state is present
+    if "state" in data and isinstance(data["state"], dict):
+        # If game_over or winner aren't already included in the state
+        if "game_over" not in data["state"] or "winner" not in data["state"]:
+            # Add these fields with default values if not present
+            if "game_over" not in data["state"]:
+                data["state"]["game_over"] = data.get("game_over", False)
+            if "winner" not in data["state"]:
+                data["state"]["winner"] = data.get("winner", None)
+    
     # Gửi cho endpoint thường (/ws/battle/{match_id})
     if match_id in connections:
         for websocket in connections[match_id]:
@@ -1639,7 +2018,7 @@ async def websocket_championship_dashboard(websocket: WebSocket):
         connections["/ws/championship/dashboard"] = []
     connections["/ws/championship/dashboard"].append(websocket)
     
-    # Send initial state
+    # Send initial state with time information
     team_count = len(championship_manager.teams)
     await websocket.send_json({
         "type": "initial_state",
@@ -1648,7 +2027,8 @@ async def websocket_championship_dashboard(websocket: WebSocket):
         "current_round": championship_manager.current_round + 1 if championship_manager.rounds else 0,
         "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0,
         "leaderboard": championship_manager.get_leaderboard(),
-        "schedule": await get_championship_schedule()
+        "schedule": await get_championship_schedule(),
+        "turn_time": 10  # Default turn_time for all matches
     })
     
     try:
@@ -1836,7 +2216,7 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
     # Đây là trận đấu championship, cập nhật spectator count
     match.spectator_count += 1
     
-    # Gửi thông tin trận đấu
+    # Gửi thông tin trận đấu với time data - đảm bảo giá trị không âm
     await websocket.send_json({
         "type": "championship_match_info",
         "team_a": match.team_a,
@@ -1846,10 +2226,15 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
         "current_game": match.current_game + 1 if match.games else 0,
         "team_a_points": match.team_a_points,
         "team_b_points": match.team_b_points,
-        "spectator_count": match.spectator_count
+        "spectator_count": match.spectator_count,
+        "team_a_match_time": max(0, match.team_a_match_time),
+        "team_b_match_time": max(0, match.team_b_match_time),
+        "team_a_consumed_time": match.team_a_consumed_time,
+        "team_b_consumed_time": match.team_b_consumed_time,
+        "turn_time": match.turn_time
     })
     
-    # Nếu trận đấu có game, gửi thông tin game hiện tại
+    # Nếu trận đấu có game, gửi thông tin game hiện tại với game_over và winner
     if match.games and match.current_game < len(match.games):
         game = match.games[match.current_game]
         await websocket.send_json({
@@ -1857,7 +2242,9 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
             "game_number": game.game_number,
             "first_player": game.first_player,
             "status": game.status,
-            "state": game.game_state
+            "state": game.game_state,
+            "game_over": game.game_state.get("game_over", False) if game.game_state else False,
+            "winner": game.game_state.get("winner", None) if game.game_state else None
         })
     
     # Broadcast cập nhật số người xem
