@@ -9,7 +9,24 @@ import GameControls from '../../app/components/GameControls';
 import styles from '../../../styles/Game.module.css';
 
 // WebSocket server URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+
+// Determine if we should use secure WebSocket based on environment - ưu tiên giao thức từ URL
+const isSecureConnection = WS_URL.startsWith('wss://') || 
+  API_URL.startsWith('https://') ||
+  (typeof window !== 'undefined' && window.location.protocol === 'https:');
+
+// Hàm tạo WebSocket URL đúng cách
+const getWebSocketUrl = (endpoint: string): string => {
+  // Extract base URL without protocol
+  const baseUrl = WS_URL.replace(/^wss?:\/\//, '');
+  
+  // Ưu tiên sử dụng WSS nếu WS_URL đã là WSS
+  const protocol = WS_URL.startsWith('wss://') ? 'wss' : (isSecureConnection ? 'wss' : 'ws');
+  
+  return `${protocol}://${baseUrl}${endpoint}`;
+};
 
 interface GameState {
   board: number[][];
@@ -39,7 +56,11 @@ const GamePage: React.FC = () => {
   useEffect(() => {
     if (!gameId) return;
     
-    const ws = new WebSocket(`${WS_URL}/ws/${gameId}`);
+    // Tạo URL WebSocket với hàm getWebSocketUrl để đảm bảo đúng giao thức
+    const wsUrl = getWebSocketUrl(`/ws/${gameId}`);
+    console.log('Connecting to WebSocket at:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
       setConnected(true);

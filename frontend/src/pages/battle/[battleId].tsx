@@ -7,8 +7,25 @@ import 'react-toastify/dist/ReactToastify.css';
 import Board from '../../app/components/Board';
 import styles from '../../../styles/Battle.module.css';
 
-// WebSocket URL
+// WebSocket URL and API URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+
+// Determine if we should use secure WebSocket based on environment - ưu tiên giao thức từ URL
+const isSecureConnection = WS_URL.startsWith('wss://') || 
+  API_URL.startsWith('https://') ||
+  (typeof window !== 'undefined' && window.location.protocol === 'https:');
+
+// Modified WebSocket endpoint construction - cải thiện để ưu tiên giao thức từ biến môi trường
+const getWebSocketUrl = (endpoint: string): string => {
+  // Extract base URL without protocol
+  const baseUrl = WS_URL.replace(/^wss?:\/\//, '');
+  
+  // Ưu tiên sử dụng WSS nếu WS_URL đã là WSS
+  const protocol = WS_URL.startsWith('wss://') ? 'wss' : (isSecureConnection ? 'wss' : 'ws');
+  
+  return `${protocol}://${baseUrl}${endpoint}`;
+};
 
 // Maximum number of reconnection attempts
 const MAX_RECONNECT_ATTEMPTS = 3;
@@ -118,8 +135,9 @@ const BattlePage: React.FC = () => {
       
       try {
         // Create new WebSocket connection
-        console.log(`Connecting to WebSocket at ${WS_URL}/ws/battle/${battleId}`);
-        ws = new WebSocket(`${WS_URL}/ws/battle/${battleId}`);
+        const wsUrl = getWebSocketUrl(`/ws/battle/${battleId}`);
+        console.log(`Connecting to WebSocket at ${wsUrl}`);
+        ws = new WebSocket(wsUrl);
         
         // Set a timeout to detect connection issues
         const connectionTimeout = setTimeout(() => {

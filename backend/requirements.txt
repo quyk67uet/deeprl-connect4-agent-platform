@@ -11,6 +11,7 @@ python-multipart==0.0.17
 pydantic==2.10.6
 websockets==14.1
 redis==5.0.1  # For Redis integration
+gunicorn==21.2.0
 
 # Other dependencies
 pandas==2.2.1

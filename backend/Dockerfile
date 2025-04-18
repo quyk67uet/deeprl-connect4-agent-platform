@@ -2,17 +2,15 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Copy requirements file
+# Cài đặt các dependencies cần thiết
 COPY requirements.txt .
-
-# Install dependencies
 RUN pip install -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Expose the port the app runs on
+# Expose application port
 EXPOSE 10000
 
-# Command to run the application
-CMD ["gunicorn", "server:app", "--bind", "0.0.0.0:10000", "--worker-class", "uvicorn.workers.UvicornWorker", "--timeout", "120"]
+# Run the application with SSL options for WebSocket/HTTPS support
+CMD ["gunicorn", "server:app", "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:10000", "--timeout", "300", "--forwarded-allow-ips", "*", "--proxy-headers"]

@@ -11,17 +11,18 @@ import styles from '../../../styles/Championship.module.css';
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
 
-// Determine if we should use secure connections
-const isSecureConnection = typeof window !== 'undefined' && 
-  (window.location.protocol === 'https:' || API_URL.startsWith('https://') || WS_URL.startsWith('wss://'));
+// Determine if we should use secure connections - ưu tiên giao thức từ biến môi trường
+const isSecureConnection = WS_URL.startsWith('wss://') || 
+  API_URL.startsWith('https://') || 
+  (typeof window !== 'undefined' && window.location.protocol === 'https:');
 
-// Properly formatted WebSocket URL
+// Properly formatted WebSocket URL - cải thiện để ưu tiên giao thức từ biến môi trường
 const getWebSocketUrl = (endpoint: string): string => {
   // Extract base URL without protocol
   const baseUrl = WS_URL.replace(/^wss?:\/\//, '');
   
-  // Use secure protocol if on HTTPS
-  const protocol = isSecureConnection ? 'wss' : 'ws';
+  // Ưu tiên sử dụng WSS nếu WS_URL đã là WSS
+  const protocol = WS_URL.startsWith('wss://') ? 'wss' : (isSecureConnection ? 'wss' : 'ws');
   
   return `${protocol}://${baseUrl}${endpoint}`;
 };
