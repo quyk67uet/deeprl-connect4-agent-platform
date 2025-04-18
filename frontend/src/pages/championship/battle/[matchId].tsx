@@ -155,6 +155,7 @@ const ChampionshipBattlePage: React.FC = () => {
     let ws: WebSocket | null = null;
     let reconnectAttempts = 0;
     let reconnectTimeout: NodeJS.Timeout | null = null;
+    let forceReload = false; // Biến đánh dấu cần reload trang
     
     const connectWebSocket = () => {
       // Clear any existing reconnection timeout
@@ -192,9 +193,14 @@ const ChampionshipBattlePage: React.FC = () => {
               // Set timeout for reconnection with exponential backoff
               const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1);
               reconnectTimeout = setTimeout(connectWebSocket, delay);
+            } else {
+              toast.error('Could not connect to the server. Please refresh the page.', {
+                autoClose: false,
+                onClick: () => window.location.reload()
+              });
             }
           }
-        }, 5000); // 5 second timeout
+        }, 5000);
         
         if (ws) {
           ws.onopen = () => {
@@ -208,6 +214,20 @@ const ChampionshipBattlePage: React.FC = () => {
           ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
             console.log('Received championship battle data:', data);
+            
+            // Handle match restart message
+            if (data.type === 'match_restart') {
+              console.log('Match is being restarted, page will reload');
+              toast.info(data.message || 'Match is restarting. Page will reload shortly.');
+              forceReload = true;
+              
+              // Delay reload to allow toast to be seen
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
+              
+              return;
+            }
             
             // Handle championship match info
             if (data.type === 'championship_match_info') {
@@ -399,65 +419,57 @@ const ChampionshipBattlePage: React.FC = () => {
           
           ws.onclose = (event) => {
             setConnected(false);
-            console.log(`WebSocket closed: ${event.code} ${event.reason}`);
+            clearTimeout(connectionTimeoutId);
+            console.log(`WebSocket closed: ${event.code} ${event.reason || ''}`);
             
-            // Attempt to reconnect if not manually closed
-            if (event.code !== 1000) {
-              if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-                reconnectAttempts++;
-                console.log(`WebSocket closed. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-                toast.info(`Connection lost. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-                
-                // Set timeout for reconnection with exponential backoff
-                const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1);
-                reconnectTimeout = setTimeout(connectWebSocket, delay);
-              } else {
-                console.log('Max reconnect attempts reached. Giving up.');
-                toast.error('Unable to connect to the server after multiple attempts.');
-              }
+            // Nếu đóng kết nối do server yêu cầu reload trang, không thử kết nối lại
+            if (forceReload) {
+              return;
+            }
+            
+            // Try to reconnect if under max attempts
+            if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+              reconnectAttempts++;
+              console.log(`WebSocket closed. Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+              
+              // Set timeout for reconnection with exponential backoff
+              const delay = RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1);
+              reconnectTimeout = setTimeout(connectWebSocket, delay);
+            } else {
+              toast.error('Connection to server lost. Please refresh the page to continue watching.', {
+                autoClose: false,
+                onClick: () => window.location.reload()
+              });
             }
           };
           
           ws.onerror = (error) => {
             console.error('WebSocket error:', error);
-            toast.error('Connection error. Please check your network or refresh the page.');
-            
-            // Clear the connection timeout if it exists
-            if (connectionTimeoutId) {
-              clearTimeout(connectionTimeoutId);
-            }
-            
-            // Force close in case of error
-            if (ws && ws.readyState !== WebSocket.CLOSED) {
-              ws.close();
-            }
+            toast.error('Connection error detected. Attempting to reconnect...');
           };
           
           setSocket(ws);
         }
       } catch (error) {
-        console.error('Error setting up WebSocket:', error);
-        toast.error('Failed to connect to the server.');
-        
-        // Try to reconnect
-        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-          reconnectAttempts++;
-          reconnectTimeout = setTimeout(connectWebSocket, RECONNECT_DELAY);
-        }
+        console.error('Error creating WebSocket connection:', error);
+        toast.error('Failed to establish connection. Please refresh the page.', {
+          autoClose: false,
+          onClick: () => window.location.reload()
+        });
       }
     };
     
-    // Start connection
+    // Initial connection
     connectWebSocket();
     
-    // Cleanup on unmount
+    // Cleanup on component unmount
     return () => {
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
       }
       
-      if (socket) {
-        socket.close();
+      if (ws) {
+        ws.close();
       }
     };
   }, [matchId, updateBoard]);

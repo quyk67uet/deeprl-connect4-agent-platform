@@ -680,6 +680,8 @@ const BattlePage: React.FC = () => {
                       <br />
                       <span className={styles.jsonKey}>"valid_moves"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>[0,1,2,...]</span>
                       <br />
+                      <span className={styles.jsonKey}>"is_new_game"</span><span className={styles.jsonSymbol}>: </span><span className={styles.jsonValue}>True|False</span>
+                      <br />
                       <span className={styles.jsonSymbol}>{"}"}</span>
                     </div>
                     <p>and return:</p>

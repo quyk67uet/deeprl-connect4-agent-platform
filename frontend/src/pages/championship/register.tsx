@@ -134,6 +134,7 @@ const ChampionshipRegistration: React.FC = () => {
   "board": [[0,0,0,...], [...], ...],  // 6x7 board state
   "current_player": 1,                 // 1 or 2
   "valid_moves": [0,1,2,...]           // Available column indices
+  "is_new_game": Boolean
 }`}
             </pre>
             

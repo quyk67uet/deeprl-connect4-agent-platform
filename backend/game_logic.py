@@ -86,10 +86,15 @@ class Connect4Game:
     def get_board(self):
         return self.board.tolist()
     
+    def is_new_game(self):
+        """Check if the game is new by counting non-zero cells in the board."""
+        return sum(1 for row in self.board for cell in row if cell != 0) <= 1
+    
     def get_state(self):
         return {
             "board": self.get_board(),
             "current_player": self.current_player,
             "game_over": self.game_over,
-            "winner": self.winner
+            "winner": self.winner,
+            "is_new_game": self.is_new_game()
         }

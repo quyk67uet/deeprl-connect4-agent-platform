@@ -816,11 +816,12 @@ async def make_external_ai_move(game_id: str, ai_url: str):
         data = {
             "board": game_state["board"],
             "current_player": game_state["current_player"],
-            "valid_moves": game.get_valid_moves()
+            "valid_moves": game.get_valid_moves(),
+            "is_new_game": game.is_new_game()
         }
         
         logger.info(f"Making request to external AI: {ai_url}")
-        logger.info(f"Request data: {data}")
+        logger.info(f"Request data: {data} (is_new_game: {game.is_new_game()})")
         
         # Make request to external AI
         async with httpx.AsyncClient() as client:
@@ -924,14 +925,16 @@ async def simulate_ai_battle(battle_id: str, ai1_url: Optional[str], ai2_url: Op
         else:
             # Prepare data for external AI
             game_state = game.get_state()
+            
             data = {
                 "board": game_state["board"],
                 "current_player": game_state["current_player"],
-                "valid_moves": game.get_valid_moves()
+                "valid_moves": game.get_valid_moves(),
+                "is_new_game": game.is_new_game()
             }
             
             logger.info(f"Making request to external AI: {ai_url}")
-            logger.info(f"Request data: {data}")
+            logger.info(f"Request data: {data} (is_new_game: {game.is_new_game()})")
             
             # Get move from external AI
             try:
@@ -1227,9 +1230,12 @@ async def external_ai_move(request: Request):
         data = await request.json()
         board = data.get("board")
         valid_moves = data.get("valid_moves", [])
+        is_new_game = data.get("is_new_game", False)
         
         if not board or not valid_moves:
             raise HTTPException(status_code=400, detail="Invalid request data")
+        
+        logger.info(f"Received request for move: board={len(board)}x{len(board[0])}, is_new_game={is_new_game}")
         
         if ai_agent:
             # Use trained AI to make a move
@@ -1239,6 +1245,7 @@ async def external_ai_move(request: Request):
             import random
             column = random.choice(valid_moves)
         
+        logger.info(f"Sending move response: {column}")
         return {"move": column}
     
     except Exception as e:
@@ -1436,14 +1443,13 @@ async def start_round(round_number: int):
         "message": f"Round {round_number + 1} is starting!"
     })
     
-    # Start all matches in this round concurrently
-    tasks = []
+    # Thực hiện các trận đấu tuần tự thay vì đồng thời
     for match_id in championship_manager.rounds[round_number]:
-        task = asyncio.create_task(execute_match(match_id))
-        tasks.append(task)
-    
-    # Wait for all matches to complete
-    await asyncio.gather(*tasks)
+        logger.info(f"Executing match {match_id}")
+        await execute_match(match_id)
+        
+        # Tạm dừng ngắn giữa các trận để hệ thống có thể dọn dẹp tài nguyên
+        await asyncio.sleep(1)
     
     # Check spectator count to determine delay before next round
     spectator_count = championship_manager.get_current_round_spectator_count()
@@ -1467,6 +1473,26 @@ async def execute_match(match_id: str):
     if not match:
         logger.error(f"Match {match_id} not found")
         return
+    
+    # Đóng tất cả các kết nối WebSocket cũ tới trận đấu này (nếu có)
+    championship_channel = f"championship_battle:{match_id}"
+    if championship_channel in connections and connections[championship_channel]:
+        close_count = len(connections[championship_channel])
+        logger.info(f"Closing {close_count} existing connections to match {match_id} before starting")
+        
+        # Gửi thông báo trận đấu kết thúc và sẽ bắt đầu lại
+        for websocket in connections[championship_channel]:
+            try:
+                await websocket.send_json({
+                    "type": "match_restart",
+                    "message": "Trận đấu đang được khởi động lại. Vui lòng làm mới trang."
+                })
+                await websocket.close(code=1000)
+            except Exception as e:
+                logger.error(f"Error closing WebSocket connection: {e}")
+        
+        # Xóa danh sách kết nối cũ
+        connections[championship_channel] = []
     
     match.status = "in_progress"
     match.start_time = datetime.now()
@@ -1518,6 +1544,23 @@ async def execute_match(match_id: str):
     
     # Play all 4 games
     for game_idx, game in enumerate(match.games):
+        # Kiểm tra và đảm bảo các giá trị thời gian hợp lệ trước khi bắt đầu game mới
+        if match.team_a_match_time < 0 or match.team_a_match_time > 240.0:
+            logger.warning(f"Invalid team A match time before game {game.game_number}: {match.team_a_match_time}. Resetting to valid value.")
+            match.team_a_match_time = max(0.0, min(match.team_a_match_time, 240.0))
+        
+        if match.team_b_match_time < 0 or match.team_b_match_time > 240.0:
+            logger.warning(f"Invalid team B match time before game {game.game_number}: {match.team_b_match_time}. Resetting to valid value.")
+            match.team_b_match_time = max(0.0, min(match.team_b_match_time, 240.0))
+            
+        if match.team_a_consumed_time < 0:
+            logger.warning(f"Invalid team A consumed time before game {game.game_number}: {match.team_a_consumed_time}. Resetting to 0.")
+            match.team_a_consumed_time = 0.0
+            
+        if match.team_b_consumed_time < 0:
+            logger.warning(f"Invalid team B consumed time before game {game.game_number}: {match.team_b_consumed_time}. Resetting to 0.")
+            match.team_b_consumed_time = 0.0
+        
         # Check if we should end early due to score difference - but ONLY if one team has run out of time
         # We'll still play all 4 games but just mark the match winner early
         match_winner_decided = False
@@ -1641,6 +1684,16 @@ async def execute_match(match_id: str):
             "game_over": game_result.get("game_over", True),
             "winner_player": game_result.get("winner_player", None)
         })
+        
+        # Add delay between games if this isn't the last game
+        if game_idx < len(match.games) - 1:
+            logger.info(f"Adding 1.5-second delay before starting game {game_idx + 2}")
+            await broadcast_battle_update(match_id, {
+                "type": "game_transition",
+                "message": "Transitioning to next game...",
+                "delay_seconds": 1.5
+            })
+            await asyncio.sleep(1.5)
     
     # Determine match winner if not already decided
     match.status = "finished"
@@ -1770,14 +1823,16 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
             
             return {"winner": winner, "moves": move_count, "reason": "match_time_exceeded"}
         
-        # Prepare game state for AI
+        # Prepare game state for AI using the is_new_game method from the game class
         game_state = {
             "board": connect4_game.get_state()["board"],
             "current_player": connect4_game.current_player,
             "valid_moves": connect4_game.get_valid_moves(),
-            "game_over": connect4_game.game_over,
-            "winner": connect4_game.winner
+            "is_new_game": connect4_game.is_new_game()
         }
+        
+        # Log the state being sent to API
+        logger.info(f"Game state sent to API: is_new_game={connect4_game.is_new_game()}, move_count={move_count}")
         
         # Broadcast current state with time information
         await broadcast_battle_update(match_id, {
@@ -1804,14 +1859,45 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
         move_time = time.time() - move_start_time
         move_time = min(move_time, match.turn_time)  # Cap at maximum turn time
         
+        # Kiểm tra và đảm bảo move_time là giá trị hợp lệ
+        if move_time < 0:
+            logger.warning(f"Detected negative move time: {move_time}. Setting to 0.")
+            move_time = 0.0
+        
         # Update team's match time and consumed time
         if current_team == "team_a":
-            match.team_a_match_time = max(0, match.team_a_match_time - move_time)
+            old_match_time = match.team_a_match_time
+            old_consumed_time = match.team_a_consumed_time
+            
+            # Cập nhật thời gian với bảo vệ giá trị
+            match.team_a_match_time = max(0.0, match.team_a_match_time - move_time)
             match.team_a_consumed_time += move_time
+            
+            # Kiểm tra xem giá trị đã được cập nhật có hợp lệ không
+            if match.team_a_match_time > 240.0:
+                logger.error(f"Invalid team_a_match_time: {match.team_a_match_time}. Resetting to 240.0")
+                match.team_a_match_time = 240.0
+            if match.team_a_consumed_time < 0:
+                logger.error(f"Invalid team_a_consumed_time: {match.team_a_consumed_time}. Resetting to previous value + move_time")
+                match.team_a_consumed_time = max(0.0, old_consumed_time + move_time)
+            
             logger.info(f"Team A used {move_time:.2f}s for this move. Remaining: {match.team_a_match_time:.2f}s, Total consumed: {match.team_a_consumed_time:.2f}s")
         else:
-            match.team_b_match_time = max(0, match.team_b_match_time - move_time)
+            old_match_time = match.team_b_match_time
+            old_consumed_time = match.team_b_consumed_time
+            
+            # Cập nhật thời gian với bảo vệ giá trị
+            match.team_b_match_time = max(0.0, match.team_b_match_time - move_time)
             match.team_b_consumed_time += move_time
+            
+            # Kiểm tra xem giá trị đã được cập nhật có hợp lệ không
+            if match.team_b_match_time > 240.0:
+                logger.error(f"Invalid team_b_match_time: {match.team_b_match_time}. Resetting to 240.0")
+                match.team_b_match_time = 240.0
+            if match.team_b_consumed_time < 0:
+                logger.error(f"Invalid team_b_consumed_time: {match.team_b_consumed_time}. Resetting to previous value + move_time")
+                match.team_b_consumed_time = max(0.0, old_consumed_time + move_time)
+                
             logger.info(f"Team B used {move_time:.2f}s for this move. Remaining: {match.team_b_match_time:.2f}s, Total consumed: {match.team_b_consumed_time:.2f}s")
         
         # Check if move was made within turn time
@@ -1939,9 +2025,15 @@ async def get_ai_move_with_timeout(endpoint: str, game_state: Dict, timeout: flo
         return None
         
     try:
-        # Tạo httpx client với verify=False để bỏ qua lỗi SSL
+        # Log the request to help with debugging
+        logger.info(f"Sending request to AI endpoint with game state: board shape={len(game_state['board'])}x{len(game_state['board'][0])}, "
+                   f"current_player={game_state['current_player']}, "
+                   f"valid_moves={game_state['valid_moves']}, "
+                   f"is_new_game={game_state.get('is_new_game', False)}")
+        
+        # Create httpx client with verify=False to skip SSL errors
         async with httpx.AsyncClient(verify=False) as client:
-            # Đảm bảo endpoint có protocol
+            # Ensure endpoint has protocol
             if not endpoint.startswith(('http://', 'https://')):
                 endpoint = 'https://' + endpoint
                 
@@ -1951,33 +2043,59 @@ async def get_ai_move_with_timeout(endpoint: str, game_state: Dict, timeout: flo
                 if response.status_code == 200:
                     data = response.json()
                     if "move" in data and isinstance(data["move"], int):
+                        logger.info(f"Received valid move from API: {data['move']}")
                         return data["move"]
+                    else:
+                        logger.warning(f"Received invalid move format: {data}")
             except Exception as e:
                 logger.warning(f"HTTPS attempt failed: {str(e)}")
                 
-                # Thử lại với HTTP nếu HTTPS thất bại
+                # Try again with HTTP if HTTPS fails
                 try:
-                    # Chuyển sang HTTP
+                    # Switch to HTTP
                     http_endpoint = endpoint.replace('https://', 'http://')
                     if not http_endpoint.startswith('http://'):
                         http_endpoint = 'http://' + http_endpoint.replace('https://', '')
                     
+                    logger.info(f"Retrying with HTTP endpoint: {http_endpoint}")
                     response = await client.post(http_endpoint, json=game_state, timeout=timeout)
                     
                     if response.status_code == 200:
                         data = response.json()
                         if "move" in data and isinstance(data["move"], int):
+                            logger.info(f"Received valid move from API (HTTP): {data['move']}")
                             return data["move"]
+                        else:
+                            logger.warning(f"Received invalid move format (HTTP): {data}")
                 except Exception as e:
                     logger.error(f"HTTP attempt also failed: {str(e)}")
     except Exception as e:
         logger.error(f"Error getting AI move: {str(e)}")
     
+    logger.error("Failed to get valid move from API")
     return None
 
 # WebSocket broadcast functions
 async def broadcast_dashboard_update(update_type: str, data: Dict):
     """Broadcast updates to all dashboard WebSocket connections."""
+    # Ensure all time values are non-negative
+    for key in ["team_a_match_time", "team_b_match_time", "team_a_consumed_time", "team_b_consumed_time"]:
+        if key in data and data[key] is not None:
+            data[key] = max(0.0, float(data[key]))
+    
+    # If this is a match update, log the time values
+    if update_type == "match_update" and ("team_a_match_time" in data or "team_b_match_time" in data):
+        logger.info(f"Broadcasting dashboard time values: A-match={data.get('team_a_match_time', 'N/A')}, " +
+                   f"B-match={data.get('team_b_match_time', 'N/A')}, " +
+                   f"A-consumed={data.get('team_a_consumed_time', 'N/A')}, " +
+                   f"B-consumed={data.get('team_b_consumed_time', 'N/A')}")
+    
+    # Process consumed_time values in leaderboard data
+    if update_type == "leaderboard_update" and "leaderboard" in data:
+        for team_data in data["leaderboard"]:
+            if "consumed_time" in team_data and team_data["consumed_time"] is not None:
+                team_data["consumed_time"] = max(0.0, float(team_data["consumed_time"]))
+    
     message = {"type": update_type, **data}
     
     if "/ws/championship/dashboard" in connections:
@@ -1995,6 +2113,18 @@ async def broadcast_battle_update(match_id: str, data: Dict):
                 data["state"]["game_over"] = data.get("game_over", False)
             if "winner" not in data["state"]:
                 data["state"]["winner"] = data.get("winner", None)
+    
+    # Ensure all time values are non-negative
+    for key in ["team_a_match_time", "team_b_match_time", "team_a_consumed_time", "team_b_consumed_time"]:
+        if key in data and data[key] is not None:
+            data[key] = max(0.0, float(data[key]))
+    
+    # Log the time values being sent
+    if "team_a_match_time" in data or "team_b_match_time" in data:
+        logger.info(f"Broadcasting time values: A-match={data.get('team_a_match_time', 'N/A')}, " +
+                   f"B-match={data.get('team_b_match_time', 'N/A')}, " +
+                   f"A-consumed={data.get('team_a_consumed_time', 'N/A')}, " +
+                   f"B-consumed={data.get('team_b_consumed_time', 'N/A')}")
     
     # Gửi cho endpoint thường (/ws/battle/{match_id})
     if match_id in connections:
@@ -2237,6 +2367,11 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
     # Nếu trận đấu có game, gửi thông tin game hiện tại với game_over và winner
     if match.games and match.current_game < len(match.games):
         game = match.games[match.current_game]
+        
+        # Determine colors based on first_player
+        team_a_color = "red" if game.first_player == "team_a" else "yellow"
+        team_b_color = "yellow" if game.first_player == "team_a" else "red"
+        
         await websocket.send_json({
             "type": "game_info",
             "game_number": game.game_number,
@@ -2244,7 +2379,9 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
             "status": game.status,
             "state": game.game_state,
             "game_over": game.game_state.get("game_over", False) if game.game_state else False,
-            "winner": game.game_state.get("winner", None) if game.game_state else None
+            "winner": game.game_state.get("winner", None) if game.game_state else None,
+            "team_a_color": team_a_color,
+            "team_b_color": team_b_color
         })
     
     # Broadcast cập nhật số người xem
