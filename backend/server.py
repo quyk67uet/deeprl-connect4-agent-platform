@@ -1282,10 +1282,6 @@ async def connect4_move(request: Request):
         logger.error(f"Error in connect4 move: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Simple test endpoint
-@app.get("/api/test")
-async def test_endpoint():
-    return {"status": "ok", "message": "Test endpoint is working"}
 
 # Championship Registration API
 @app.post("/api/championship/register")
@@ -2421,4 +2417,8 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
         if championship_channel in connections and websocket in connections[championship_channel]:
             connections[championship_channel].remove(websocket)
             match.spectator_count -= 1
+
+@app.get("/api/test")
+async def health_check():
+    return {"status": "ok", "message": "Server is running"}
 
