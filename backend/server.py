@@ -1291,66 +1291,32 @@ async def register_team(team_data: TeamRegistration, background_tasks: Backgroun
         raise HTTPException(status_code=400, detail="Team name already registered")
 
     # Validate the endpoint
-    test_game_state = {
-        "board": [[0]*7 for _ in range(6)],
-        "current_player": 1,
-        "valid_moves": [0,1,2,3,4,5,6],
-        "game_over": False,
-        "winner": None
-    }
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                team_data.api_endpoint, 
-                json=test_game_state, 
-                timeout=10.0
-            )
-            
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"API endpoint returned status code {response.status_code}"
-                )
-            
-            data = response.json()
-            if "move" not in data or not isinstance(data["move"], int) or data["move"] not in test_game_state["valid_moves"]:
-                raise HTTPException(
-                    status_code=400, 
-                    detail="API endpoint did not return a valid move"
-                )
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=400, detail="API endpoint timed out")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=400, detail=f"Error connecting to API endpoint: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error validating API endpoint: {str(e)}")
+    is_valid = await validate_endpoint(team_data.api_endpoint)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail="API endpoint validation failed")
 
     # Register the team
     success = championship_manager.add_team(team_data.team_name, team_data.api_endpoint)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to register team")
-
-    # Lưu vào storage
+        
+    # Cập nhật Redis nếu cần
     try:
-        await storage.hset(f"team:{team_data.team_name}", "api_endpoint", team_data.api_endpoint)
-        logger.info(f"Stored team {team_data.team_name} in storage")
+        key = f"team:{team_data.team_name}"
+        await storage.hset(key, "api_endpoint", team_data.api_endpoint)
     except Exception as e:
-        logger.error(f"Error storing team in storage: {e}")
+        logger.error(f"Error saving team to Redis: {e}")
     
-    # Update team count
-    team_count = len(championship_manager.teams)
-    max_teams = 20  # Giới hạn số đội (có thể điều chỉnh)
-    logger.info(f"Team {team_data.team_name} registered. Total teams: {team_count}/{max_teams}")
-    
-    # Đã bỏ đoạn code tự động bắt đầu championship khi đủ 19 đội
-    
-    return {"success": True, "message": f"Team registered successfully. {team_count}/{max_teams} teams registered."}
+    # Trả về thông tin thành công
+    return {"success": True, "team_name": team_data.team_name}
 
 # Get championship status
 @app.get("/api/championship/status")
 async def get_championship_status():
     team_count = len(championship_manager.teams)
+    
+    # Tính toán số trận đấu đồng thời dựa trên số đội
+    concurrent_matches = 5 if team_count > 10 else (min(team_count // 2, 5) if team_count > 0 else 2)
     
     return {
         "status": championship_manager.status,
@@ -1358,7 +1324,8 @@ async def get_championship_status():
         "current_round": championship_manager.current_round + 1 if championship_manager.rounds else 0,
         "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0,
         "turn_time": 10,  # Default turn time in seconds
-        "match_time": 240  # Default match time per team in seconds (4 minutes)
+        "match_time": 240,  # Default match time per team in seconds (4 minutes)
+        "concurrent_matches": concurrent_matches  # Thêm thông tin số trận đồng thời
     }
 
 # Get championship leaderboard
@@ -1417,7 +1384,24 @@ async def start_championship_after_delay(delay_seconds: int):
     # Start the first round
     await start_round(0)
 
-# Giới hạn chạy tối đa 2 trận đấu đồng thời cho phù hợp với Render Free
+# Giới hạn chạy tối đa 5 trận đấu đồng thời nếu có nhiều đội, còn không thì giới hạn theo số trận mỗi vòng
+async def update_match_semaphore():
+    """Cập nhật số lượng trận đấu đồng thời dựa trên số lượng đội tham gia"""
+    team_count = len(championship_manager.teams)
+    if team_count > 10:
+        # Nếu có hơn 10 đội, cho phép chạy tối đa 5 trận đồng thời
+        return asyncio.Semaphore(5)
+    elif team_count > 0:
+        # Tính số trận mỗi vòng: team_count // 2 (làm tròn xuống)
+        matches_per_round = team_count // 2
+        # Nếu ít hơn 10 đội, giới hạn số trận đồng thời bằng số trận mỗi vòng
+        # nhưng không vượt quá 5
+        return asyncio.Semaphore(min(matches_per_round, 5))
+    else:
+        # Mặc định nếu chưa có đội nào
+        return asyncio.Semaphore(2)
+
+# Khởi tạo ban đầu với giá trị mặc định
 match_semaphore = asyncio.Semaphore(2)
 
 # Tạo dictionary để lưu trữ lock cho mỗi match
@@ -1445,10 +1429,17 @@ async def start_round(round_number: int):
         "message": f"Round {round_number + 1} is starting!"
     })
     
-    # Thực hiện tất cả các trận đấu song song thay vì tuần tự, giới hạn 2 trận một lúc
+    # Cập nhật semaphore dựa trên số lượng đội tham gia
+    global match_semaphore
+    match_semaphore = await update_match_semaphore()
+    
+    # Lấy số lượng trận đấu đồng thời hiện tại để hiển thị log
+    current_limit = match_semaphore._value
+    
+    # Thực hiện tất cả các trận đấu song song, với số lượng tối đa phụ thuộc vào số đội
     async def execute_match_with_semaphore(match_id):
         async with match_semaphore:
-            logger.info(f"Executing match {match_id} (in parallel)")
+            logger.info(f"Executing match {match_id} (in parallel, limit: {current_limit})")
             try:
                 await execute_match(match_id)
             except Exception as e:
@@ -1468,7 +1459,7 @@ async def start_round(round_number: int):
     
     # Đợi tất cả các trận đấu trong round hoàn thành, xử lý các ngoại lệ 
     if match_tasks:
-        logger.info(f"Waiting for {len(match_tasks)} matches to complete in parallel (max 2 concurrently)")
+        logger.info(f"Waiting for {len(match_tasks)} matches to complete in parallel (max {current_limit} concurrently)")
         try:
             await asyncio.gather(*match_tasks)
             logger.info(f"All {len(match_tasks)} matches in round {round_number + 1} have completed")
@@ -2270,8 +2261,11 @@ async def websocket_championship_dashboard(websocket: WebSocket):
         connections["/ws/championship/dashboard"] = []
     connections["/ws/championship/dashboard"].append(websocket)
     
-    # Send initial state with time information
+    # Tính toán số trận đấu đồng thời dựa trên số đội
     team_count = len(championship_manager.teams)
+    concurrent_matches = 5 if team_count > 10 else (min(team_count // 2, 5) if team_count > 0 else 2)
+    
+    # Send initial state with time information
     await websocket.send_json({
         "type": "initial_state",
         "status": championship_manager.status,
@@ -2280,7 +2274,8 @@ async def websocket_championship_dashboard(websocket: WebSocket):
         "total_rounds": len(championship_manager.rounds) if championship_manager.rounds else 0,
         "leaderboard": championship_manager.get_leaderboard(),
         "schedule": await get_championship_schedule(),
-        "turn_time": 10  # Default turn_time for all matches
+        "turn_time": 10,  # Default turn_time for all matches
+        "concurrent_matches": concurrent_matches  # Thêm thông tin số trận đồng thời
     })
     
     try:
@@ -2410,37 +2405,27 @@ async def clear_cache_endpoint():
 # Thêm endpoint mới sau phần các API championship
 @app.post("/api/championship/start")
 async def start_championship_manually(background_tasks: BackgroundTasks):
-    """Manually start the championship"""
-    # Kiểm tra số lượng đội
-    team_count = len(championship_manager.teams)
+    """Start the championship manually."""
+    # Kiểm tra nếu giải đấu đã bắt đầu rồi
+    if championship_manager.status == "in_progress":
+        raise HTTPException(status_code=400, detail="Championship is already in progress")
     
-    if team_count < 2:
-        raise HTTPException(status_code=400, detail="Cần ít nhất 2 đội để bắt đầu giải đấu")
+    # Cần ít nhất 2 đội để bắt đầu
+    if len(championship_manager.teams) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 teams to start")
     
-    if championship_manager.status != "waiting":
-        raise HTTPException(status_code=400, detail="Giải đấu đã bắt đầu hoặc đã kết thúc")
-    
-    # Tạo lịch thi đấu
-    logger.info("Đang tạo lịch thi đấu cho giải...")
-    championship_manager.generate_schedule()
-    
-    # Cập nhật trạng thái
-    championship_manager.status = "in_progress"
-    
-    # Broadcast trạng thái
-    await broadcast_dashboard_update("status_update", {
-        "status": championship_manager.status,
-        "message": "Giải đấu đã bắt đầu!",
-        "schedule": await get_championship_schedule()
-    })
-    
-    # Bắt đầu vòng đầu tiên trong background
-    background_tasks.add_task(start_round, 0)
+    # Cập nhật semaphore dựa trên số lượng đội
+    global match_semaphore
+    match_semaphore = await update_match_semaphore()
+        
+    # Bắt đầu giải đấu sau 10 giây
+    background_tasks.add_task(start_championship_after_delay, 10)
     
     return {
-        "success": True,
-        "message": f"Giải đấu bắt đầu với {team_count} đội",
-        "team_count": team_count
+        "status": "starting",
+        "message": "Championship will start in 10 seconds",
+        "team_count": len(championship_manager.teams),
+        "concurrent_matches": match_semaphore._value  # Thêm thông tin về số trận đồng thời
     }
 
 @app.websocket("/ws/championship/battle/{match_id}")
