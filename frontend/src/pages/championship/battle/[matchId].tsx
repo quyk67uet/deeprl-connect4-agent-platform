@@ -670,14 +670,14 @@ const ChampionshipBattlePage: React.FC = () => {
                   <div style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Match Time:</span>
-                      <span>
-                        {Math.max(0, Math.floor((matchData.teamAMatchTime || 0) / 60))}:
+                      <span className={matchData.teamAMatchTime < 60 ? styles.dangerText : ''}>
+                        {Math.floor((matchData.teamAMatchTime || 0) / 60)}:
                         {Math.max(0, (matchData.teamAMatchTime || 0) % 60).toFixed(0).padStart(2, '0')}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Time Used:</span>
-                      <span>{typeof matchData.teamAConsumedTime === 'number' ? matchData.teamAConsumedTime.toFixed(1) : '0.0'}s</span>
+                      <span>{typeof matchData.teamAConsumedTime === 'number' ? matchData.teamAConsumedTime.toFixed(2) : '0.00'}s</span>
                     </div>
                   </div>
                 </div>
@@ -722,14 +722,14 @@ const ChampionshipBattlePage: React.FC = () => {
                   <div style={{ fontSize: '0.8rem', marginTop: '0.5rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Match Time:</span>
-                      <span>
-                        {Math.max(0, Math.floor((matchData.teamBMatchTime || 0) / 60))}:
+                      <span className={matchData.teamBMatchTime < 60 ? styles.dangerText : ''}>
+                        {Math.floor((matchData.teamBMatchTime || 0) / 60)}:
                         {Math.max(0, (matchData.teamBMatchTime || 0) % 60).toFixed(0).padStart(2, '0')}
                       </span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>Time Used:</span>
-                      <span>{typeof matchData.teamBConsumedTime === 'number' ? matchData.teamBConsumedTime.toFixed(1) : '0.0'}s</span>
+                      <span>{typeof matchData.teamBConsumedTime === 'number' ? matchData.teamBConsumedTime.toFixed(2) : '0.00'}s</span>
                     </div>
                   </div>
                 </div>
