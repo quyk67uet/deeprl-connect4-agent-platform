@@ -292,6 +292,9 @@ class Game:
         
         # Thêm biến theo dõi thời gian cho từng nước đi
         self.last_move_time = None  # Thời gian của nước đi cuối cùng
+        
+        # Thêm biến để đánh dấu đã tính vào thống kê W/D/L chưa
+        self._stats_counted = False
 
 # Championship Manager
 class ChampionshipManager:
@@ -430,28 +433,38 @@ class ChampionshipManager:
         logger.info(f"Updated leaderboard: {match.team_a}={self.leaderboard[match.team_a]}, {match.team_b}={self.leaderboard[match.team_b]}")
         logger.info(f"Delta points: {match.team_a}+{delta_team_a}, {match.team_b}+{delta_team_b}")
         
-        # Chỉ cập nhật tổng thời gian khi trận đấu hoàn thành
+        # Cộng dồn thời gian qua các trận đấu
         if match.status == "finished":
-            # Cập nhật thời gian trực tiếp từ trận đấu
-            self.team_consumed_times[match.team_a] = match.team_a_consumed_time
-            self.team_consumed_times[match.team_b] = match.team_b_consumed_time
+            # Lấy thời gian hiện có và cộng thêm thời gian từ trận này
+            current_a_time = self.team_consumed_times.get(match.team_a, 0)
+            current_b_time = self.team_consumed_times.get(match.team_b, 0)
             
-            logger.info(f"Updated team consumed times (final): {match.team_a}={match.team_a_consumed_time:.2f}s, {match.team_b}={match.team_b_consumed_time:.2f}s")
+            # Cộng dồn thời gian
+            self.team_consumed_times[match.team_a] = current_a_time + match.team_a_consumed_time
+            self.team_consumed_times[match.team_b] = current_b_time + match.team_b_consumed_time
+            
+            logger.info(f"Accumulated team consumed times: {match.team_a}={self.team_consumed_times[match.team_a]:.2f}s, {match.team_b}={self.team_consumed_times[match.team_b]:.2f}s")
         else:
             # Log thời gian hiện tại mà không cập nhật vào bảng xếp hạng
             logger.info(f"Current match time values: {match.team_a}={match.team_a_consumed_time:.2f}s, {match.team_b}={match.team_b_consumed_time:.2f}s")
         
-        # Update win/loss/draw statistics if match is finished
-        if match.status == "finished" and match.winner:
-            if match.winner == "team_a":
-                self.team_stats[match.team_a]["wins"] += 1
-                self.team_stats[match.team_b]["losses"] += 1
-            elif match.winner == "team_b":
-                self.team_stats[match.team_b]["wins"] += 1
-                self.team_stats[match.team_a]["losses"] += 1
-            elif match.winner == "draw":
-                self.team_stats[match.team_a]["draws"] += 1
-                self.team_stats[match.team_b]["draws"] += 1
+        # Cập nhật thống kê win/loss/draw theo từng GAME (không phải trận đấu)
+        for game in match.games:
+            if game.status == "finished" and game.winner:
+                # Kiểm tra xem game đã được tính vào thống kê chưa (để tránh cộng trùng lặp)
+                if not hasattr(game, '_stats_counted') or not game._stats_counted:
+                    if game.winner == "team_a":
+                        self.team_stats[match.team_a]["wins"] += 1
+                        self.team_stats[match.team_b]["losses"] += 1
+                    elif game.winner == "team_b":
+                        self.team_stats[match.team_b]["wins"] += 1
+                        self.team_stats[match.team_a]["losses"] += 1
+                    elif game.winner == "draw":
+                        self.team_stats[match.team_a]["draws"] += 1
+                        self.team_stats[match.team_b]["draws"] += 1
+                    
+                    # Đánh dấu game đã được tính vào thống kê
+                    game._stats_counted = True
 
     def get_leaderboard(self) -> List[Dict]:
         """Return leaderboard sorted by points, then by consumed time (ascending)."""
@@ -1768,6 +1781,9 @@ async def execute_match(match_id: str):
                 elif game.winner == "draw":
                     match.team_a_points += 0.5
                     match.team_b_points += 0.5
+                    
+                # Đánh dấu game chưa được tính thống kê W/D/L
+                game._stats_counted = False
                 
                 # Cập nhật tạm thời leaderboard sau mỗi game
                 match.status = "in_progress"  # Đảm bảo trạng thái vẫn là "in_progress"

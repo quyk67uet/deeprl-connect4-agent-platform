@@ -533,9 +533,9 @@ const ChampionshipDashboard: React.FC = () => {
                       <th>Rank</th>
                       <th>Team</th>
                       <th>Points</th>
-                      <th>W</th>
-                      <th>D</th>
-                      <th>L</th>
+                      <th title="Game Wins">GW</th>
+                      <th title="Game Draws">GD</th>
+                      <th title="Game Losses">GL</th>
                       <th>Time Used (s)</th>
                     </tr>
                   </thead>
