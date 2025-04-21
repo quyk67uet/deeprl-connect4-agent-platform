@@ -430,19 +430,16 @@ class ChampionshipManager:
         logger.info(f"Updated leaderboard: {match.team_a}={self.leaderboard[match.team_a]}, {match.team_b}={self.leaderboard[match.team_b]}")
         logger.info(f"Delta points: {match.team_a}+{delta_team_a}, {match.team_b}+{delta_team_b}")
         
-        # Update total consumed time for each team - ensure it's not negative
-        current_a_time = self.team_consumed_times.get(match.team_a, 0)
-        current_b_time = self.team_consumed_times.get(match.team_b, 0)
-        
-        # Add the consumed times from this match
-        new_a_time = current_a_time + max(0, match.team_a_consumed_time)
-        new_b_time = current_b_time + max(0, match.team_b_consumed_time)
-        
-        # Update with the new values
-        self.team_consumed_times[match.team_a] = new_a_time
-        self.team_consumed_times[match.team_b] = new_b_time
-        
-        logger.info(f"Updated team consumed times: {match.team_a}={new_a_time:.2f}s, {match.team_b}={new_b_time:.2f}s")
+        # Chỉ cập nhật tổng thời gian khi trận đấu hoàn thành
+        if match.status == "finished":
+            # Cập nhật thời gian trực tiếp từ trận đấu
+            self.team_consumed_times[match.team_a] = match.team_a_consumed_time
+            self.team_consumed_times[match.team_b] = match.team_b_consumed_time
+            
+            logger.info(f"Updated team consumed times (final): {match.team_a}={match.team_a_consumed_time:.2f}s, {match.team_b}={match.team_b_consumed_time:.2f}s")
+        else:
+            # Log thời gian hiện tại mà không cập nhật vào bảng xếp hạng
+            logger.info(f"Current match time values: {match.team_a}={match.team_a_consumed_time:.2f}s, {match.team_b}={match.team_b_consumed_time:.2f}s")
         
         # Update win/loss/draw statistics if match is finished
         if match.status == "finished" and match.winner:
