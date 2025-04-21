@@ -67,6 +67,7 @@ interface TeamStats {
   wins: number;
   losses: number;
   draws: number;
+  rank?: number;
 }
 
 const ChampionshipDashboard: React.FC = () => {
@@ -102,15 +103,14 @@ const ChampionshipDashboard: React.FC = () => {
     try {
       setIsStarting(true);
       const response = await axios.post(`${API_URL}/api/championship/start`);
-      
-      if (response.data.success) {
-        toast.success(response.data.message);
-      } else {
-        toast.error('Không thể bắt đầu giải đấu');
-      }
+      toast.success('Giải đấu sẽ bắt đầu trong 10 giây');
     } catch (error) {
       console.error('Lỗi khi bắt đầu giải đấu:', error);
-      toast.error('Không thể bắt đầu giải đấu. Vui lòng thử lại sau.');
+      if (axios.isAxiosError(error) && error.response) {
+        toast.error(error.response.data.detail || 'Không thể bắt đầu giải đấu');
+      } else {
+        toast.error('Lỗi kết nối. Vui lòng thử lại sau.');
+      }
     } finally {
       setIsStarting(false);
     }
@@ -217,9 +217,8 @@ const ChampionshipDashboard: React.FC = () => {
             setStatus(prev => ({
               ...prev,
               status: data.status || prev.status,
-              // Cập nhật total_rounds và current_round nếu có
-              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {}),
-              ...(data.current_round !== undefined ? { current_round: data.current_round } : {})
+              current_round: data.current_round !== undefined ? data.current_round : prev.current_round,
+              total_rounds: data.total_rounds !== undefined ? data.total_rounds : prev.total_rounds
             }));
             
             // If schedule is included, update it
@@ -242,9 +241,8 @@ const ChampionshipDashboard: React.FC = () => {
             // Update current round when a new round starts
             setStatus(prev => ({
               ...prev,
-              current_round: data.current_round || data.round_number || prev.current_round,
-              // Cập nhật total_rounds nếu có
-              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {})
+              current_round: data.round_number || prev.current_round,
+              total_rounds: data.total_rounds || prev.total_rounds
             }));
             
             // Show message
@@ -254,33 +252,39 @@ const ChampionshipDashboard: React.FC = () => {
             break;
             
           case 'round_complete':
-            // Update rounds info if included
-            setStatus(prev => ({
-              ...prev,
-              ...(data.current_round !== undefined ? { current_round: data.current_round } : {}),
-              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {})
-            }));
-            
             // Show message when a round completes
             if (data.message) {
               toast.info(data.message);
             }
+            
+            // Cập nhật leaderboard nếu có
+            if (data.leaderboard) {
+              setLeaderboard(data.leaderboard);
+            }
             break;
             
           case 'match_update':
-            // Update schedule with match information
+            // Update a single match in the schedule
             setSchedule(prev => {
-              const roundIndex = prev.rounds.findIndex(round => 
-                round.matches.some(match => match.match_id === data.match_id)
+              if (!prev.rounds || !prev.rounds.length) {
+                return prev;
+              }
+              
+              // Find the round this match belongs to
+              const roundIndex = prev.rounds.findIndex(r => 
+                r.matches && r.matches.some(m => m.match_id === data.match_id)
               );
               
-              if (roundIndex !== -1) {
-                const newRounds = [...prev.rounds];
-                const matchIndex = newRounds[roundIndex].matches.findIndex(
-                  match => match.match_id === data.match_id
+              if (roundIndex >= 0 && prev.rounds[roundIndex].matches) {
+                // Find the match in this round
+                const matchIndex = prev.rounds[roundIndex].matches.findIndex(
+                  m => m.match_id === data.match_id
                 );
                 
-                if (matchIndex !== -1) {
+                if (matchIndex >= 0) {
+                  // Create a new rounds array
+                  const newRounds = [...prev.rounds];
+                  
                   // Update the match with the new data
                   newRounds[roundIndex].matches[matchIndex] = {
                     ...newRounds[roundIndex].matches[matchIndex],
@@ -296,20 +300,24 @@ const ChampionshipDashboard: React.FC = () => {
               
               return prev;
             });
+            
+            // Nếu trận đấu hoàn thành, hãy yêu cầu cập nhật bảng điểm
+            if (data.status === "completed") {
+              // Tùy chọn: Có thể gọi API để lấy bảng xếp hạng mới nhất
+              axios.get(`${API_URL}/api/championship/leaderboard`)
+                .then(response => {
+                  setLeaderboard(response.data || []);
+                })
+                .catch(error => {
+                  console.error("Error fetching updated leaderboard:", error);
+                });
+            }
             break;
             
           case 'leaderboard_update':
             // Update leaderboard
             if (data.leaderboard) {
               setLeaderboard(data.leaderboard);
-            }
-            
-            // Update total_rounds if included
-            if (data.total_rounds !== undefined) {
-              setStatus(prev => ({
-                ...prev,
-                total_rounds: data.total_rounds
-              }));
             }
             break;
         }
@@ -370,6 +378,27 @@ const ChampionshipDashboard: React.FC = () => {
         return styles.statusFinished;
       default:
         return '';
+    }
+  };
+  
+  // Submit registration
+  const handleRegistration = async (teamName: string, endpoint: string) => {
+    try {
+      // Submit registration
+      const response = await axios.post(`${API_URL}/api/championship/register`, {
+        team_name: teamName.trim(),
+        api_endpoint: endpoint
+      });
+      
+      toast.success(response.data.message || 'Đăng ký thành công!');
+      
+      // Redirect to dashboard after successful registration
+      setTimeout(() => {
+        router.push('/championship/dashboard');
+      }, 2000);
+    } catch (error) {
+      console.error('Error registering team:', error);
+      toast.error('Đăng ký đội thất bại. Vui lòng thử lại sau.');
     }
   };
   
@@ -512,8 +541,8 @@ const ChampionshipDashboard: React.FC = () => {
                   </thead>
                   <tbody>
                     {leaderboard.map((team, index) => (
-                      <tr key={team.team_name} className={index < 3 ? styles.topRank : ''}>
-                        <td>{index + 1}</td>
+                      <tr key={team.team_name} className={(team.rank && team.rank <= 3) ? styles.topRank : ''}>
+                        <td>{team.rank || index + 1}</td>
                         <td>{team.team_name}</td>
                         <td>{team.points}</td>
                         <td>{team.wins}</td>

@@ -54,7 +54,7 @@ const ChampionshipRegistration: React.FC = () => {
         api_endpoint: endpoint
       });
       
-      toast.success(response.data.message);
+      toast.success(response.data.message || 'Team registered successfully!');
       
       // Redirect to dashboard after successful registration
       setTimeout(() => {
