@@ -216,7 +216,10 @@ const ChampionshipDashboard: React.FC = () => {
             // Update championship status
             setStatus(prev => ({
               ...prev,
-              status: data.status || prev.status
+              status: data.status || prev.status,
+              // Cập nhật total_rounds và current_round nếu có
+              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {}),
+              ...(data.current_round !== undefined ? { current_round: data.current_round } : {})
             }));
             
             // If schedule is included, update it
@@ -239,7 +242,9 @@ const ChampionshipDashboard: React.FC = () => {
             // Update current round when a new round starts
             setStatus(prev => ({
               ...prev,
-              current_round: data.round_number || prev.current_round
+              current_round: data.current_round || data.round_number || prev.current_round,
+              // Cập nhật total_rounds nếu có
+              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {})
             }));
             
             // Show message
@@ -249,6 +254,13 @@ const ChampionshipDashboard: React.FC = () => {
             break;
             
           case 'round_complete':
+            // Update rounds info if included
+            setStatus(prev => ({
+              ...prev,
+              ...(data.current_round !== undefined ? { current_round: data.current_round } : {}),
+              ...(data.total_rounds !== undefined ? { total_rounds: data.total_rounds } : {})
+            }));
+            
             // Show message when a round completes
             if (data.message) {
               toast.info(data.message);
@@ -256,27 +268,19 @@ const ChampionshipDashboard: React.FC = () => {
             break;
             
           case 'match_update':
-            // Update a single match in the schedule
+            // Update schedule with match information
             setSchedule(prev => {
-              if (!prev.rounds || !prev.rounds.length) {
-                return prev;
-              }
-              
-              // Find the round this match belongs to
-              const roundIndex = prev.rounds.findIndex(r => 
-                r.matches && r.matches.some(m => m.match_id === data.match_id)
+              const roundIndex = prev.rounds.findIndex(round => 
+                round.matches.some(match => match.match_id === data.match_id)
               );
               
-              if (roundIndex >= 0 && prev.rounds[roundIndex].matches) {
-                // Find the match in this round
-                const matchIndex = prev.rounds[roundIndex].matches.findIndex(
-                  m => m.match_id === data.match_id
+              if (roundIndex !== -1) {
+                const newRounds = [...prev.rounds];
+                const matchIndex = newRounds[roundIndex].matches.findIndex(
+                  match => match.match_id === data.match_id
                 );
                 
-                if (matchIndex >= 0) {
-                  // Create a new rounds array
-                  const newRounds = [...prev.rounds];
-                  
+                if (matchIndex !== -1) {
                   // Update the match with the new data
                   newRounds[roundIndex].matches[matchIndex] = {
                     ...newRounds[roundIndex].matches[matchIndex],
@@ -298,6 +302,14 @@ const ChampionshipDashboard: React.FC = () => {
             // Update leaderboard
             if (data.leaderboard) {
               setLeaderboard(data.leaderboard);
+            }
+            
+            // Update total_rounds if included
+            if (data.total_rounds !== undefined) {
+              setStatus(prev => ({
+                ...prev,
+                total_rounds: data.total_rounds
+              }));
             }
             break;
         }

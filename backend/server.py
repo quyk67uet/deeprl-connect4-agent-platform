@@ -1412,10 +1412,16 @@ async def start_round(round_number: int):
     if round_number >= len(championship_manager.rounds):
         # Championship is finished
         championship_manager.status = "finished"
+        
+        # Cập nhật leaderboard cuối cùng
+        final_leaderboard = championship_manager.get_leaderboard()
+        
         await broadcast_dashboard_update("status_update", {
             "status": championship_manager.status,
             "message": "Championship has finished!",
-            "leaderboard": championship_manager.get_leaderboard()
+            "leaderboard": final_leaderboard,
+            "current_round": round_number,
+            "total_rounds": len(championship_manager.rounds)
         })
         return
     
@@ -1426,6 +1432,7 @@ async def start_round(round_number: int):
     await broadcast_dashboard_update("round_start", {
         "round_number": round_number + 1,
         "total_rounds": len(championship_manager.rounds),
+        "current_round": round_number + 1,
         "message": f"Round {round_number + 1} is starting!"
     })
     
@@ -1470,9 +1477,17 @@ async def start_round(round_number: int):
     # Giảm thời gian chờ giữa các vòng xuống còn 5 giây
     delay = 5
     
+    # Gửi leaderboard sau mỗi round để cập nhật real-time
+    current_leaderboard = championship_manager.get_leaderboard()
+    await broadcast_dashboard_update("leaderboard_update", {
+        "leaderboard": current_leaderboard
+    })
+    
     logger.info(f"Round {round_number + 1} completed. Waiting {delay} seconds before starting next round...")
     await broadcast_dashboard_update("round_complete", {
         "round_number": round_number + 1,
+        "current_round": round_number + 1,
+        "total_rounds": len(championship_manager.rounds),
         "message": f"Round {round_number + 1} completed. Next round starts in {delay} seconds."
     })
     
@@ -2208,6 +2223,10 @@ async def broadcast_dashboard_update(update_type: str, data: Dict):
         for team_data in data["leaderboard"]:
             if "consumed_time" in team_data and team_data["consumed_time"] is not None:
                 team_data["consumed_time"] = max(0.0, float(team_data["consumed_time"]))
+    
+    # Add total_rounds to all updates if not already present
+    if "total_rounds" not in data and championship_manager.rounds:
+        data["total_rounds"] = len(championship_manager.rounds)
     
     message = {"type": update_type, **data}
     
