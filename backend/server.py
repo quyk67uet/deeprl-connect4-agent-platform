@@ -2150,8 +2150,7 @@ async def validate_endpoint(endpoint: str) -> bool:
         "board": [[0]*7 for _ in range(6)],
         "current_player": 1,
         "valid_moves": [0,1,2,3,4,5,6],
-        "game_over": False,
-        "winner": None
+        "is_new_game": True
     }
     
     try:
