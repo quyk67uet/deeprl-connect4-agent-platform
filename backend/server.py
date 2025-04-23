@@ -465,6 +465,57 @@ class ChampionshipManager:
                     
                     # Đánh dấu game đã được tính vào thống kê
                     game._stats_counted = True
+                    
+        # Đảm bảo tổng điểm đúng - kiểm tra và điều chỉnh nếu cần
+        if match.status == "finished":
+            total_points = match.team_a_points + match.team_b_points
+            # Nếu đây là trận đã hoàn thành và tổng số điểm không bằng 4
+            if total_points != 4.0 and len(match.games) == 4:
+                logger.warning(f"Match {match_id} has incorrect total points: {total_points}, fixing...")
+                
+                # Đếm số ván đã hoàn thành
+                completed_games = sum(1 for g in match.games if g.status == "finished")
+                
+                # Nếu đã chơi hết tất cả các ván nhưng tổng điểm không đúng, điều chỉnh lại
+                if completed_games == 4:
+                    # Xem có bao nhiêu điểm còn thiếu
+                    missing_points = 4.0 - total_points
+                    
+                    if missing_points > 0:
+                        logger.info(f"Adding {missing_points} missing points to match winner")
+                        # Cộng điểm cho đội thắng, nếu hòa thì chia đều
+                        if match.winner == "team_a":
+                            match.team_a_points += missing_points
+                            # Cập nhật thống kê wins cho team_a và losses cho team_b
+                            self.team_stats[match.team_a]["wins"] += int(missing_points)
+                            self.team_stats[match.team_b]["losses"] += int(missing_points)
+                        elif match.winner == "team_b":
+                            match.team_b_points += missing_points
+                            # Cập nhật thống kê wins cho team_b và losses cho team_a
+                            self.team_stats[match.team_b]["wins"] += int(missing_points)
+                            self.team_stats[match.team_a]["losses"] += int(missing_points)
+                        else:
+                            # Trường hợp hiếm gặp: không có người chiến thắng
+                            match.team_a_points += missing_points / 2
+                            match.team_b_points += missing_points / 2
+                            # Cập nhật thống kê draws cho cả hai team
+                            if missing_points >= 1:
+                                draw_games = int(missing_points)
+                                self.team_stats[match.team_a]["draws"] += draw_games
+                                self.team_stats[match.team_b]["draws"] += draw_games
+                        
+                        # Cập nhật lại điểm số trên bảng xếp hạng
+                        delta_team_a = match.team_a_points - match.previous_team_a_points
+                        delta_team_b = match.team_b_points - match.previous_team_b_points
+                        
+                        self.leaderboard[match.team_a] += delta_team_a
+                        self.leaderboard[match.team_b] += delta_team_b
+                        
+                        # Cập nhật lại giá trị previous_points
+                        match.previous_team_a_points = match.team_a_points
+                        match.previous_team_b_points = match.team_b_points
+                        
+                        logger.info(f"After correction: {match.team_a}={match.team_a_points}, {match.team_b}={match.team_b_points}")
 
     def get_leaderboard(self) -> List[Dict]:
         """Return leaderboard sorted by points, then by consumed time (ascending)."""
@@ -1689,6 +1740,12 @@ async def execute_match(match_id: str):
                     # Award points to team B for all remaining games
                     remaining_games = len(match.games) - game_idx
                     match.team_b_points += remaining_games
+                    
+                    # Update team stats for each remaining game
+                    for _ in range(remaining_games):
+                        championship_manager.team_stats[match.team_a]["losses"] += 1
+                        championship_manager.team_stats[match.team_b]["wins"] += 1
+                    
                     match.winner = "team_b"
                     
                     # Broadcast time out message
@@ -1707,7 +1764,7 @@ async def execute_match(match_id: str):
                     # End match early in case of time out
                     should_end_early = True
                     break
-                    
+                
                 if match.team_b_match_time <= 0:
                     team_out_of_time = "team_b"
                     logger.info(f"Team B ({match.team_b}) has run out of total match time")
@@ -1715,6 +1772,12 @@ async def execute_match(match_id: str):
                     # Award points to team A for all remaining games
                     remaining_games = len(match.games) - game_idx
                     match.team_a_points += remaining_games
+                    
+                    # Update team stats for each remaining game
+                    for _ in range(remaining_games):
+                        championship_manager.team_stats[match.team_b]["losses"] += 1
+                        championship_manager.team_stats[match.team_a]["wins"] += 1
+                    
                     match.winner = "team_a"
                     
                     # Broadcast time out message
@@ -1776,11 +1839,19 @@ async def execute_match(match_id: str):
                 # Update points based on game result
                 if game.winner == "team_a":
                     match.team_a_points += 1
+                    logger.info(f"Game {game.game_number}: {match.team_a} wins (+1 point)")
                 elif game.winner == "team_b":
                     match.team_b_points += 1
+                    logger.info(f"Game {game.game_number}: {match.team_b} wins (+1 point)")
                 elif game.winner == "draw":
                     match.team_a_points += 0.5
                     match.team_b_points += 0.5
+                    logger.info(f"Game {game.game_number}: Draw (+0.5 points each)")
+                
+                # Log additional information about the reason if available
+                if game_result.get("reason") in ["turn_time_exceeded", "match_time_exceeded", "invalid_move"]:
+                    loser_team = "team_a" if game.winner == "team_b" else "team_b"
+                    logger.info(f"Game {game.game_number}: {loser_team} lost due to {game_result.get('reason')}")
                     
                 # Đánh dấu game chưa được tính thống kê W/D/L
                 game._stats_counted = False
@@ -1977,6 +2048,7 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
             
             # Set winner to the other team
             winner = "team_b" if current_team == "team_a" else "team_a"
+            winner_player = 2 if connect4_game.current_player == 1 else 1
             
             # Broadcast time-out with correct time values
             await broadcast_battle_update(match_id, {
@@ -1991,7 +2063,13 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
                 "team_b_consumed_time": match.team_b_consumed_time
             })
             
-            return {"winner": winner, "moves": move_count, "reason": "match_time_exceeded"}
+            return {
+                "winner": winner, 
+                "moves": move_count, 
+                "reason": "match_time_exceeded", 
+                "game_over": True,
+                "winner_player": winner_player
+            }
         
         # Prepare game state for AI using the is_new_game method from the game class
         game_state = {
@@ -2088,6 +2166,7 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
             
             # Set winner to the other team
             winner = "team_b" if current_team == "team_a" else "team_a"
+            winner_player = 2 if connect4_game.current_player == 1 else 1
             
             # Broadcast turn timeout with correct time values
             await broadcast_battle_update(match_id, {
@@ -2102,7 +2181,13 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
                 "team_b_consumed_time": match.team_b_consumed_time
             })
             
-            return {"winner": winner, "moves": move_count, "reason": "turn_time_exceeded"}
+            return {
+                "winner": winner, 
+                "moves": move_count, 
+                "reason": "turn_time_exceeded", 
+                "game_over": True,
+                "winner_player": winner_player
+            }
         
         # Make the move
         connect4_game.make_move(column)
