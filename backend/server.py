@@ -2527,9 +2527,14 @@ async def startup_event():
 
 # API endpoint to manually clear Redis cache
 @app.post("/api/clear-cache")
-async def clear_cache_endpoint():
+async def clear_cache_endpoint(request: Request):
     """Manually clear all Redis cache and reset championship data"""
     global championship_manager
+    
+    # Kiểm tra header bảo mật đơn giản
+    admin_token = request.headers.get("Admin-Token")
+    if not admin_token or admin_token != "2302":
+        raise HTTPException(status_code=403, detail="Không có quyền truy cập API này")
     
     try:
         # 1. Xóa cache Redis
@@ -2696,4 +2701,113 @@ async def websocket_championship_battle(websocket: WebSocket, match_id: str):
 @app.get("/api/test")
 async def health_check():
     return {"status": "ok", "message": "Server is running"}
+
+# API endpoint to restart a specific round in championship
+@app.post("/api/championship/restart-round/{round_number}")
+async def restart_championship_round(round_number: int, request: Request, background_tasks: BackgroundTasks):
+    """Restart a specific round in the championship, keeping all previous rounds' data."""
+    global championship_manager
+    
+    # Kiểm tra header bảo mật đơn giản
+    admin_token = request.headers.get("Admin-Token")
+    if not admin_token or admin_token != "2302":
+        raise HTTPException(status_code=403, detail="Không có quyền truy cập API này")
+    
+    try:
+        # Kiểm tra số round hợp lệ
+        if round_number < 0 or round_number >= len(championship_manager.rounds):
+            raise HTTPException(status_code=400, detail=f"Số round không hợp lệ. Hệ thống có {len(championship_manager.rounds)} rounds (0-{len(championship_manager.rounds)-1})")
+        
+        # Cho phép restart bất kỳ round nào, không chỉ round hiện tại
+        # Đặt current_round thành round_number để đảm bảo hệ thống sẽ tiếp tục từ round này
+        championship_manager.current_round = round_number
+        
+        logger.info(f"Đang restart round {round_number} của championship")
+        
+        # Reset trạng thái của các trận đấu trong round này
+        for match_id in championship_manager.rounds[round_number]:
+            match = championship_manager.matches.get(match_id)
+            if match:
+                # Lưu lại kết quả trước khi reset
+                old_status = match.status
+                old_team_a_points = match.team_a_points
+                old_team_b_points = match.team_b_points
+                
+                # Reset status và kết quả
+                match.status = "scheduled"
+                
+                # Nếu trận đấu đã hoàn thành, điều chỉnh điểm số trên bảng xếp hạng
+                if old_status == "finished":
+                    # Trừ điểm đã cộng trước đó
+                    championship_manager.leaderboard[match.team_a] -= old_team_a_points
+                    championship_manager.leaderboard[match.team_b] -= old_team_b_points
+                    
+                    # Reset điểm số và số liệu thống kê của trận đấu
+                    match.team_a_points = 0
+                    match.team_b_points = 0
+                    match.previous_team_a_points = 0
+                    match.previous_team_b_points = 0
+                    match.winner = None
+                    
+                    # Điều chỉnh thống kê thắng/thua/hòa
+                    for game in match.games:
+                        if game.status == "finished" and hasattr(game, '_stats_counted') and game._stats_counted:
+                            if game.winner == "team_a":
+                                championship_manager.team_stats[match.team_a]["wins"] -= 1
+                                championship_manager.team_stats[match.team_b]["losses"] -= 1
+                            elif game.winner == "team_b":
+                                championship_manager.team_stats[match.team_b]["wins"] -= 1
+                                championship_manager.team_stats[match.team_a]["losses"] -= 1
+                            elif game.winner == "draw":
+                                championship_manager.team_stats[match.team_a]["draws"] -= 1
+                                championship_manager.team_stats[match.team_b]["draws"] -= 1
+                            
+                            # Reset trạng thái game
+                            game.status = "scheduled"
+                            game.winner = None
+                            game._stats_counted = False
+                            game.game_state = None
+                
+                # Reset thời gian
+                match.team_a_match_time = 240.0
+                match.team_b_match_time = 240.0
+                match.team_a_consumed_time = 0.0
+                match.team_b_consumed_time = 0.0
+                match.start_time = None
+                match.end_time = None
+                match.current_game = 0
+                
+                # Đảm bảo các game đều được reset
+                for game in match.games:
+                    game.status = "scheduled"
+                    game.winner = None
+                    if hasattr(game, '_stats_counted'):
+                        game._stats_counted = False
+                    game.game_state = None
+                
+                logger.info(f"Đã reset trận đấu {match_id}: {match.team_a} vs {match.team_b}")
+        
+        # Cập nhật trạng thái championship
+        championship_manager.status = "in_progress"
+        
+        # Bắt đầu lại round sau 5 giây
+        background_tasks.add_task(start_round, round_number)
+        
+        return {
+            "success": True,
+            "message": f"Đã restart round {round_number}. Round sẽ bắt đầu lại sau 5 giây.",
+            "current_round": round_number,
+            "matches": [
+                {
+                    "match_id": match_id,
+                    "team_a": championship_manager.matches[match_id].team_a if match_id in championship_manager.matches else "unknown",
+                    "team_b": championship_manager.matches[match_id].team_b if match_id in championship_manager.matches else "unknown",
+                    "status": championship_manager.matches[match_id].status if match_id in championship_manager.matches else "unknown"
+                }
+                for match_id in championship_manager.rounds[round_number]
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Lỗi khi restart round {round_number}: {e}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi restart round: {str(e)}")
 

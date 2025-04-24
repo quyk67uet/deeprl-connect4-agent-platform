@@ -15,7 +15,6 @@ export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [battleId, setBattleId] = useState('');
-  const [isResetting, setIsResetting] = useState(false);
   
   // Create new game
   const createNewGame = async () => {
@@ -59,7 +58,7 @@ export default function Home() {
   
   // Reset cache
   const resetCache = async () => {
-    setIsResetting(true);
+    setIsCreating(true);
     try {
       const response = await axios.post(`${API_URL}/api/clear-cache`);
       if (response.data.success) {
@@ -71,7 +70,7 @@ export default function Home() {
       console.error('Lỗi khi reset cache:', error);
       toast.error('Không thể reset cache. Vui lòng thử lại sau.');
     } finally {
-      setIsResetting(false);
+      setIsCreating(false);
     }
   };
   
@@ -117,14 +116,6 @@ export default function Home() {
             disabled={isCreating}
           >
             Join Championship
-          </button>
-          
-          <button
-            className={`${styles.button} ${styles.resetButton}`}
-            onClick={resetCache}
-            disabled={isResetting}
-          >
-            {isResetting ? 'Đang reset...' : 'Reset Cache'}
           </button>
         </div>
         
