@@ -2,10 +2,10 @@
 
 ## Championship Demo
 
-![Championship Dashboard](https://drive.google.com/file/d/1AO4eKISzMw9VEgmRk4oqwjiEV5de0K_d/view?usp=sharing)
+![Championship Dashboard](https://drive.google.com/uc?export=view&id=1AO4eKISzMw9VEgmRk4oqwjiEV5de0K_d)
 
 ### Game in Progress
-![Game in Progress](https://drive.google.com/file/d/1G4Cax2mrmRkMhU9m8ZTXBp0hYGpr-h1v/view?usp=sharing)
+![Game in Progress](https://drive.google.com/uc?export=view&id=1G4Cax2mrmRkMhU9m8ZTXBp0hYGpr-h1v)
 
 ## Overview
 
