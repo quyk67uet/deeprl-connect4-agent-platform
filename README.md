@@ -7,6 +7,12 @@
 ### Game in Progress
 ![Game in Progress](https://drive.google.com/uc?export=view&id=1G4Cax2mrmRkMhU9m8ZTXBp0hYGpr-h1v)
 
+### Championship Menu
+![Game in Progress](https://drive.google.com/file/d/1DUjeOcupxPepgO8YJtEcrQ_bMXpSSkDz)
+
+### Championship Register
+![Game in Progress](https://drive.google.com/file/d/1t1frSr1piI2SQp0VdBmkNHmcHjrKh4Br)
+
 ## Overview
 
 This repository contains a complete platform for developing, training, and competing with Connect4 AI agents. The platform consists of two main components:
