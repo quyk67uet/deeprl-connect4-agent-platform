@@ -1,5 +1,12 @@
 # Connect4 AI Championship Platform
 
+## Championship Demo
+
+![Championship Dashboard]([https://drive.google.com/file/d/1AO4eKISzMw9VEgmRk4oqwjiEV5de0K_d/view?usp=sharing])
+
+### Game in Progress
+![Game in Progress]([https://drive.google.com/file/d/1G4Cax2mrmRkMhU9m8ZTXBp0hYGpr-h1v/view?usp=sharing])
+
 ## Overview
 
 This repository contains a complete platform for developing, training, and competing with Connect4 AI agents. The platform consists of two main components:
