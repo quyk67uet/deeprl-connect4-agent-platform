@@ -29,6 +29,9 @@ declare const styles: {
   readonly agentModeActive: string;
   readonly aiIndicator: string;
   readonly lastMove: string;
+  readonly cellRed: string; // Thêm class mới
+  readonly cellYellow: string; // Thêm class mới
+  readonly cellBlocked: string; // Thêm class mới
 };
 
 export default styles;

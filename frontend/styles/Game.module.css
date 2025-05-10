@@ -212,6 +212,42 @@
   animation: pulse 1.5s infinite alternate;
 }
 
+/* Class cho các trạng thái khác nhau của ô */
+.cellRed {
+  background-color: red; /* Màu đỏ phủ kín toàn bộ ô */
+}
+
+.cellYellow {
+  background-color: yellow; /* Màu vàng phủ kín toàn bộ ô */
+}
+
+.cellBlocked {
+  background-color: black; /* Giữ màu đen cho ô bị chặn */
+  position: relative;
+}
+
+.cellBlocked::before {
+  content: ""; /* Tạo biểu tượng block */
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  right: 10%;
+  bottom: 10%;
+  background: linear-gradient(45deg, transparent 0%, transparent 45%, red 45%, red 55%, transparent 55%, transparent 100%);
+  border-radius: 50%;
+}
+
+.cellBlocked::after {
+  content: "";
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  right: 10%;
+  bottom: 10%;
+  background: linear-gradient(135deg, transparent 0%, transparent 45%, red 45%, red 55%, transparent 55%, transparent 100%);
+  border-radius: 50%;
+}
+
 @keyframes pulse {
   from {
     box-shadow: 0 0 8px 3px rgba(255, 255, 255, 0.5);
