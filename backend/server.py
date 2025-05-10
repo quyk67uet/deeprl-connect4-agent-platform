@@ -2009,6 +2009,10 @@ async def play_game(match_id: str, game: Game, team_a_endpoint: str, team_b_endp
     
     # Create a new game instance
     connect4_game = Connect4Game()
+    
+    # Block 2 random cells at the start of the game
+    connect4_game.block_random_cells()
+    
     game.game_state = connect4_game.get_state()
     
     # Đảm bảo thời gian mặc định không vượt quá 240s và không bị âm

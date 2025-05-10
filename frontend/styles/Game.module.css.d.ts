@@ -28,6 +28,7 @@ declare const styles: {
   readonly container: string;
   readonly agentModeActive: string;
   readonly aiIndicator: string;
+  readonly lastMove: string;
 };
 
 export default styles;

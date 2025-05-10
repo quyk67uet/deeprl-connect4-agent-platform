@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 class Connect4Game:
     def __init__(self):
@@ -8,14 +9,40 @@ class Connect4Game:
         self.current_player = 1
         self.winner = None
         self.game_over = False
+        self.blocked_cells = []  # List to store blocked cell coordinates
     
     def reset(self):
         self.board = np.zeros((self.rows, self.columns), dtype=np.int8)
         self.current_player = 1
         self.winner = None
         self.game_over = False
+        self.blocked_cells = []
         
+    def block_random_cells(self):
+        """Block 2 random cells in the board that are not already blocked."""
+        # Get all valid positions (not blocked and empty)
+        valid_positions = []
+        for row in range(self.rows):
+            for col in range(self.columns):
+                if self.board[row][col] == 0 and (row, col) not in self.blocked_cells:
+                    valid_positions.append((row, col))
+        
+        # If we have less than 2 valid positions, return False
+        if len(valid_positions) < 2:
+            return False
+            
+        # Randomly select 2 positions to block
+        selected_positions = random.sample(valid_positions, 2)
+        
+        # Block the selected positions
+        for row, col in selected_positions:
+            self.board[row][col] = -1  # Use -1 to represent blocked cells
+            self.blocked_cells.append((row, col))
+            
+        return True
+    
     def is_valid_move(self, column):
+        # Check if column is valid and top cell is not blocked
         return 0 <= column < self.columns and self.board[0][column] == 0
     
     def get_valid_moves(self):
@@ -96,5 +123,6 @@ class Connect4Game:
             "current_player": self.current_player,
             "game_over": self.game_over,
             "winner": self.winner,
-            "is_new_game": self.is_new_game()
+            "is_new_game": self.is_new_game(),
+            "blocked_cells": self.blocked_cells
         }

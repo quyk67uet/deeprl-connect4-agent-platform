@@ -4,30 +4,29 @@ import styles from '../../../styles/Game.module.css';
 interface CellProps {
   value: number;
   onClick: () => void;
-  highlight: boolean;
+  highlight: boolean; 
   isLastMove?: boolean;
 }
 
 const Cell: React.FC<CellProps> = ({ value, onClick, highlight, isLastMove }) => {
-  let cellClassName = styles.cell;
-  
-  if (highlight) {
-    cellClassName += ` ${styles.highlight}`;
-  }
-  
-  if (isLastMove) {
-    cellClassName += ' lastMove';
-  }
-  
-  if (value === 1) {
-    cellClassName += ` ${styles.player1}`;
-  } else if (value === 2) {
-    cellClassName += ` ${styles.player2}`;
-  }
-  
+  const getCellContent = () => {
+    if (value === -1) {
+      return '🚫'; // Blocked cell
+    }
+    if (value === 1) {
+      return '🔴'; // Red player
+    }
+    if (value === 2) {
+      return '🟡'; // Yellow player
+    }
+    return '';
+  };
+
+  const cellClassName = `${styles.cell} ${highlight ? styles.highlight : ''} ${isLastMove ? styles.lastMove : ''}`;
+
   return (
     <div className={cellClassName} onClick={onClick}>
-      {value !== 0 && <div className={styles.piece} />}
+      {getCellContent()}
     </div>
   );
 };
