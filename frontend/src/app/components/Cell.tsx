@@ -11,15 +11,15 @@ interface CellProps {
 const Cell: React.FC<CellProps> = ({ value, onClick, highlight, isLastMove }) => {
   const getCellClass = () => {
     if (value === -1) {
-      return styles.cellBlocked; // Class mới cho ô bị chặn
+      return styles.cellBlocked; // Ô bị chặn
     }
     if (value === 1) {
-      return styles.cellRed; // Class mới cho quân đỏ
+      return styles.cellRed; // Quân đỏ
     }
     if (value === 2) {
-      return styles.cellYellow; // Class mới cho quân vàng
+      return styles.cellYellow; // Quân vàng
     }
-    return '';
+    return styles.cellEmpty; // Ô trống
   };
 
   const cellClassName = `${styles.cell} ${highlight ? styles.highlight : ''} ${isLastMove ? styles.lastMove : ''} ${getCellClass()}`;

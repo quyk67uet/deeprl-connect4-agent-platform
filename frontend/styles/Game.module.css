@@ -212,40 +212,56 @@
   animation: pulse 1.5s infinite alternate;
 }
 
-/* Class cho các trạng thái khác nhau của ô */
 .cellRed {
-  background-color: red; /* Màu đỏ phủ kín toàn bộ ô */
+  background: radial-gradient(circle at center, #ff5a45 20%, #e62e1b 60%, #aa1c0d 100%) !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  border: 2px solid #2a0804;
+  font-size: 0;
 }
 
 .cellYellow {
-  background-color: yellow; /* Màu vàng phủ kín toàn bộ ô */
+  background: radial-gradient(circle at center, #fff06b 20%, #fcd303 60%, #ca9f02 100%) !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  border: 2px solid #403300;
+  font-size: 0;
 }
 
 .cellBlocked {
-  background-color: black; /* Giữ màu đen cho ô bị chặn */
   position: relative;
+  background: radial-gradient(circle at center, #3a3a3a 20%, #222222 60%, #111111 100%) !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  border: 2px solid #000;
+  font-size: 0;
 }
 
 .cellBlocked::before {
-  content: ""; /* Tạo biểu tượng block */
+  content: "";
   position: absolute;
-  top: 10%;
-  left: 10%;
-  right: 10%;
-  bottom: 10%;
-  background: linear-gradient(45deg, transparent 0%, transparent 45%, red 45%, red 55%, transparent 55%, transparent 100%);
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  background: linear-gradient(45deg, transparent 0%, transparent 45%, #e62e1b 45%, #e62e1b 55%, transparent 55%, transparent 100%);
   border-radius: 50%;
 }
 
 .cellBlocked::after {
   content: "";
   position: absolute;
-  top: 10%;
-  left: 10%;
-  right: 10%;
-  bottom: 10%;
-  background: linear-gradient(135deg, transparent 0%, transparent 45%, red 45%, red 55%, transparent 55%, transparent 100%);
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  background: linear-gradient(135deg, transparent 0%, transparent 45%, #e62e1b 45%, #e62e1b 55%, transparent 55%, transparent 100%);
   border-radius: 50%;
+}
+
+/* Thêm class cho ô trống (nếu cần) */
+.cellEmpty {
+  background: radial-gradient(circle at center, #3a3a3a 20%, #222222 60%, #111111 100%) !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+  border: 2px solid #000;
+  font-size: 0;
 }
 
 @keyframes pulse {

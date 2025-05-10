@@ -32,6 +32,7 @@ declare const styles: {
   readonly cellRed: string; // Thêm class mới
   readonly cellYellow: string; // Thêm class mới
   readonly cellBlocked: string; // Thêm class mới
+  readonly cellEmpty: string; // Thêm class mới
 };
 
 export default styles;
