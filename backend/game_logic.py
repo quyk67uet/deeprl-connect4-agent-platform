@@ -42,8 +42,22 @@ class Connect4Game:
         return True
     
     def is_valid_move(self, column):
-        # Check if column is valid and top cell is not blocked
-        return 0 <= column < self.columns and self.board[0][column] == 0
+        """Check if a move is valid.
+        A move is valid if:
+        1. The column is within bounds
+        2. There is at least one empty cell in the column (not all cells are occupied by players or blocked)
+        """
+        # First check if column is within bounds
+        if not (0 <= column < self.columns):
+            return False
+        
+        # Check if there's at least one empty cell in the column
+        for row in range(self.rows):
+            if self.board[row][column] == 0:
+                return True
+            
+        # If we reach here, the column is either full or all cells are blocked
+        return False
     
     def get_valid_moves(self):
         return [col for col in range(self.columns) if self.is_valid_move(col)]
@@ -54,6 +68,10 @@ class Connect4Game:
             
         # Find the lowest empty row in the selected column
         for row in range(self.rows-1, -1, -1):
+            # Skip blocked cells
+            if self.board[row][column] == -1:
+                continue
+            
             if self.board[row][column] == 0:
                 self.board[row][column] = self.current_player
                 break
