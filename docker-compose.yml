@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 services:
   redis:
@@ -8,9 +8,9 @@ services:
     volumes:
       - redis-data:/data
     restart: unless-stopped
-    
+
   backend:
-    build: 
+    build:
       context: ./backend
     environment:
       - REDIS_URL=redis://redis:6379
@@ -22,5 +22,21 @@ services:
       - ./backend:/app
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://103.173.255.89:8000
+      - NEXT_PUBLIC_WS_URL=ws://103.173.255.89:8000
+        # - NEXT_PUBLIC_API_URL=https://deeprl-connect4-agent-1.onrender.com
+        #- NEXT_PUBLIC_WS_URL=wss://deeprl-connect4-agent-1.onrender.com
+
 volumes:
-  redis-data: 
+  redis-data:
+
